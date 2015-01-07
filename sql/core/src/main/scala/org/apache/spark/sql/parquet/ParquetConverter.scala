@@ -332,9 +332,6 @@ private[parquet] class CatalystPrimitiveRowConverter(
       case (field, idx) => CatalystConverter.createConverter(field, idx, this)
     }.toArray
 
-  private val rowsArray: Array[MutableRow]  =
-    Array.fill(100000){new SpecificMutableRow(schema.map(_.dataType))}
-  protected var curRow = 0
   override val size = schema.size
 
   override val index = 0
@@ -355,13 +352,11 @@ private[parquet] class CatalystPrimitiveRowConverter(
   override protected[parquet] def clearBuffer(): Unit = {}
 
   override def start(): Unit = {
-    current = rowsArray(curRow % 100000)
-    curRow+= 1
-//    var i = 0
-//    while (i < size) {
-//      current.setNullAt(i)
-//      i = i + 1
-//    }
+    var i = 0
+    while (i < size) {
+      current.setNullAt(i)
+      i = i + 1
+    }
   }
 
   override def end(): Unit = {}

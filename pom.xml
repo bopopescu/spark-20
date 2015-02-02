@@ -85,6 +85,24 @@
     </mailingList>
   </mailingLists>
 
+
+  <distributionManagement>
+  <repository>
+  <uniqueVersion>false</uniqueVersion>
+  <id>infa-maven-release</id>
+  <name>Infa Maven Release Repository</name>
+  <url>${platform.repo.release.ftp}</url>
+  <layout>default</layout>
+  </repository>
+  <snapshotRepository>
+  <uniqueVersion>true</uniqueVersion>
+  <id>infa-maven-snapshot</id>
+  <name>Infa Maven Snapshots Repository</name>
+  <url>${platform.repo.snapshot.ftp}</url>
+  <layout>default</layout>
+  </snapshotRepository>
+  </distributionManagement>
+
   <modules>
     <module>core</module>
     <module>bagel</module>

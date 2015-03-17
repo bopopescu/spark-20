@@ -35,6 +35,7 @@ import org.apache.hadoop.mapreduce._
 import org.apache.hadoop.mapreduce.lib.input.{FileInputFormat => NewFileInputFormat}
 import org.apache.hadoop.mapreduce.lib.output.{FileOutputCommitter, FileOutputFormat => NewFileOutputFormat}
 import parquet.hadoop._
+import parquet.hadoop.ParquetInputFormat._
 import parquet.hadoop.api.ReadSupport.ReadContext
 import parquet.hadoop.api.{InitContext, ReadSupport}
 import parquet.hadoop.metadata.GlobalMetaData
@@ -480,7 +481,7 @@ private[parquet] class FilteringParquetRowInputFormat
     globalMetaData = new GlobalMetaData(globalMetaData.getSchema,
       mergedMetadata, globalMetaData.getCreatedBy)
 
-    val readContext = getReadSupport(configuration).init(
+    val readContext = getReadSupportInstance(configuration).init(
       new InitContext(configuration,
         globalMetaData.getKeyValueMetaData,
         globalMetaData.getSchema))

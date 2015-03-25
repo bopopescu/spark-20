@@ -68,8 +68,8 @@ private[history] class FsHistoryProvider(conf: SparkConf) extends ApplicationHis
 
   // Constants used to parse Spark 1.0.0 log directories.
   private[history] val LOG_PREFIX = "EVENT_LOG_"
-  private[history] val SPARK_VERSION_PREFIX = "SPARK_VERSION_"
-  private[history] val COMPRESSION_CODEC_PREFIX = "COMPRESSION_CODEC_"
+  private[history] val SPARK_VERSION_PREFIX = EventLoggingListener.SPARK_VERSION_KEY + "_"
+  private[history] val COMPRESSION_CODEC_PREFIX = EventLoggingListener.COMPRESSION_CODEC_KEY + "_"
   private[history] val APPLICATION_COMPLETE = "APPLICATION_COMPLETE"
 
   /**
@@ -173,20 +173,10 @@ private[history] class FsHistoryProvider(conf: SparkConf) extends ApplicationHis
       val logInfos = statusList
         .filter { entry =>
           try {
-            val isFinishedApplication =
-              if (isLegacyLogDirectory(entry)) {
-                fs.exists(new Path(entry.getPath(), APPLICATION_COMPLETE))
-              } else {
-                !entry.getPath().getName().endsWith(EventLoggingListener.IN_PROGRESS)
-              }
-
-            if (isFinishedApplication) {
-              val modTime = getModificationTime(entry)
-              newLastModifiedTime = math.max(newLastModifiedTime, modTime)
-              modTime >= lastModifiedTime
-            } else {
-              false
-            }
+            getModificationTime(entry).map { time =>
+              newLastModifiedTime = math.max(newLastModifiedTime, time)
+              time >= lastModifiedTime
+            }.getOrElse(false)
           } catch {
             case e: AccessControlException =>
               // Do not use "logInfo" since these messages can get pretty noisy if printed on
@@ -204,7 +194,7 @@ private[history] class FsHistoryProvider(conf: SparkConf) extends ApplicationHis
               None
           }
         }
-        .sortBy { info => -info.endTime }
+        .sortWith(compareAppInfo)
 
       lastModifiedTime = newLastModifiedTime
 
@@ -214,7 +204,9 @@ private[history] class FsHistoryProvider(conf: SparkConf) extends ApplicationHis
       if (!logInfos.isEmpty) {
         val newApps = new mutable.LinkedHashMap[String, FsApplicationHistoryInfo]()
         def addIfAbsent(info: FsApplicationHistoryInfo) = {
-          if (!newApps.contains(info.id)) {
+          if (!newApps.contains(info.id) ||
+              newApps(info.id).logPath.endsWith(EventLoggingListener.IN_PROGRESS) &&
+              !info.logPath.endsWith(EventLoggingListener.IN_PROGRESS)) {
             newApps += (info.id -> info)
           }
         }
@@ -222,7 +214,7 @@ private[history] class FsHistoryProvider(conf: SparkConf) extends ApplicationHis
         val newIterator = logInfos.iterator.buffered
         val oldIterator = applications.values.iterator.buffered
         while (newIterator.hasNext && oldIterator.hasNext) {
-          if (newIterator.head.endTime > oldIterator.head.endTime) {
+          if (compareAppInfo(newIterator.head, oldIterator.head)) {
             addIfAbsent(newIterator.next)
           } else {
             addIfAbsent(oldIterator.next)
@@ -239,12 +231,24 @@ private[history] class FsHistoryProvider(conf: SparkConf) extends ApplicationHis
   }
 
   /**
+   * Comparison function that defines the sort order for the application listing.
+   *
+   * @return Whether `i1` should precede `i2`.
+   */
+  private def compareAppInfo(
+      i1: FsApplicationHistoryInfo,
+      i2: FsApplicationHistoryInfo): Boolean = {
+    if (i1.endTime != i2.endTime) i1.endTime >= i2.endTime else i1.startTime >= i2.startTime
+  }
+
+  /**
    * Replays the events in the specified log file and returns information about the associated
    * application.
    */
   private def replay(eventLog: FileStatus, bus: ReplayListenerBus): FsApplicationHistoryInfo = {
     val logPath = eventLog.getPath()
-    val (logInput, sparkVersion) =
+    logInfo(s"Replaying log path: $logPath")
+    val logInput =
       if (isLegacyLogDirectory(eventLog)) {
         openLegacyEventLog(logPath)
       } else {
@@ -253,15 +257,16 @@ private[history] class FsHistoryProvider(conf: SparkConf) extends ApplicationHis
     try {
       val appListener = new ApplicationEventListener
       bus.addListener(appListener)
-      bus.replay(logInput, sparkVersion)
+      bus.replay(logInput, logPath.toString)
       new FsApplicationHistoryInfo(
         logPath.getName(),
         appListener.appId.getOrElse(logPath.getName()),
         appListener.appName.getOrElse(NOT_STARTED),
         appListener.startTime.getOrElse(-1L),
         appListener.endTime.getOrElse(-1L),
-        getModificationTime(eventLog),
-        appListener.sparkUser.getOrElse(NOT_STARTED))
+        getModificationTime(eventLog).get,
+        appListener.sparkUser.getOrElse(NOT_STARTED),
+        isApplicationCompleted(eventLog))
     } finally {
       logInput.close()
     }
@@ -272,30 +277,24 @@ private[history] class FsHistoryProvider(conf: SparkConf) extends ApplicationHis
    * log file (along with other metadata files), which is the case for directories generated by
    * the code in previous releases.
    *
-   * @return 2-tuple of (input stream of the events, version of Spark which wrote the log)
+   * @return input stream that holds one JSON record per line.
    */
-  private[history] def openLegacyEventLog(dir: Path): (InputStream, String) = {
+  private[history] def openLegacyEventLog(dir: Path): InputStream = {
     val children = fs.listStatus(dir)
     var eventLogPath: Path = null
     var codecName: Option[String] = None
-    var sparkVersion: String = null
 
     children.foreach { child =>
       child.getPath().getName() match {
         case name if name.startsWith(LOG_PREFIX) =>
           eventLogPath = child.getPath()
-
         case codec if codec.startsWith(COMPRESSION_CODEC_PREFIX) =>
           codecName = Some(codec.substring(COMPRESSION_CODEC_PREFIX.length()))
-
-        case version if version.startsWith(SPARK_VERSION_PREFIX) =>
-          sparkVersion = version.substring(SPARK_VERSION_PREFIX.length())
-
         case _ =>
       }
     }
 
-    if (eventLogPath == null || sparkVersion == null) {
+    if (eventLogPath == null) {
       throw new IllegalArgumentException(s"$dir is not a Spark application log directory.")
     }
 
@@ -307,7 +306,7 @@ private[history] class FsHistoryProvider(conf: SparkConf) extends ApplicationHis
       }
 
     val in = new BufferedInputStream(fs.open(eventLogPath))
-    (codec.map(_.compressedInputStream(in)).getOrElse(in), sparkVersion)
+    codec.map(_.compressedInputStream(in)).getOrElse(in)
   }
 
   /**
@@ -318,16 +317,32 @@ private[history] class FsHistoryProvider(conf: SparkConf) extends ApplicationHis
    */
   private def isLegacyLogDirectory(entry: FileStatus): Boolean = entry.isDir()
 
-  private def getModificationTime(fsEntry: FileStatus): Long = {
-    if (fsEntry.isDir) {
-      fs.listStatus(fsEntry.getPath).map(_.getModificationTime()).max
+  /**
+   * Returns the modification time of the given event log. If the status points at an empty
+   * directory, `None` is returned, indicating that there isn't an event log at that location.
+   */
+  private def getModificationTime(fsEntry: FileStatus): Option[Long] = {
+    if (isLegacyLogDirectory(fsEntry)) {
+      val statusList = fs.listStatus(fsEntry.getPath)
+      if (!statusList.isEmpty) Some(statusList.map(_.getModificationTime()).max) else None
     } else {
-      fsEntry.getModificationTime()
+      Some(fsEntry.getModificationTime())
     }
   }
 
   /** Returns the system's mononotically increasing time. */
   private def getMonotonicTimeMs(): Long = System.nanoTime() / (1000 * 1000)
+
+  /**
+   * Return true when the application has completed.
+   */
+  private def isApplicationCompleted(entry: FileStatus): Boolean = {
+    if (isLegacyLogDirectory(entry)) {
+      fs.exists(new Path(entry.getPath(), APPLICATION_COMPLETE))
+    } else {
+      !entry.getPath().getName().endsWith(EventLoggingListener.IN_PROGRESS)
+    }
+  }
 
 }
 
@@ -342,5 +357,6 @@ private class FsApplicationHistoryInfo(
     startTime: Long,
     endTime: Long,
     lastUpdated: Long,
-    sparkUser: String)
-  extends ApplicationHistoryInfo(id, name, startTime, endTime, lastUpdated, sparkUser)
+    sparkUser: String,
+    completed: Boolean = true)
+  extends ApplicationHistoryInfo(id, name, startTime, endTime, lastUpdated, sparkUser, completed)

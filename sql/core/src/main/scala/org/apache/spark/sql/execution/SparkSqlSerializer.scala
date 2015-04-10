@@ -39,11 +39,16 @@ import org.apache.spark.sql.catalyst.expressions.codegen.{IntegerHashSet, LongHa
 
 private[sql] class SparkSqlSerializer(conf: SparkConf) extends KryoSerializer(conf) {
   override def newKryo(): Kryo = {
+    import org.apache.spark.sql.catalyst.expressions.MutableStringSerializer
     val kryo = new Kryo()
     kryo.setRegistrationRequired(false)
     kryo.register(classOf[MutablePair[_, _]])
     kryo.register(classOf[org.apache.spark.sql.catalyst.expressions.GenericRow])
     kryo.register(classOf[org.apache.spark.sql.catalyst.expressions.GenericMutableRow])
+
+    kryo.register(classOf[org.apache.spark.sql.catalyst.expressions.MutableString],
+        new MutableStringSerializer)
+
     kryo.register(classOf[com.clearspring.analytics.stream.cardinality.HyperLogLog],
                   new HyperLogLogSerializer)
     kryo.register(classOf[java.math.BigDecimal], new JavaBigDecimalSerializer)

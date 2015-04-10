@@ -213,6 +213,9 @@ private[parquet] abstract class CatalystConverter extends GroupConverter {
   protected[parquet] def updateString(fieldIndex: Int, value: String): Unit =
     updateField(fieldIndex, value)
 
+  protected[parquet] def updateString(fieldIndex: Int, value: Binary): Unit =
+    updateField(fieldIndex, value.toStringUsingUTF8)
+
   protected[parquet] def updateTimestamp(fieldIndex: Int, value: Binary): Unit =
     updateField(fieldIndex, readTimestamp(value))
 
@@ -409,6 +412,9 @@ private[parquet] class CatalystPrimitiveRowConverter(
   override protected[parquet] def updateString(fieldIndex: Int, value: String): Unit =
     current.setString(fieldIndex, value)
 
+  override protected[parquet] def updateString(fieldIndex: Int, value: Binary): Unit =
+    current.update(fieldIndex, value)
+
   override protected[parquet] def updateTimestamp(fieldIndex: Int, value: Binary): Unit =
     current.update(fieldIndex, readTimestamp(value))
 
@@ -475,7 +481,7 @@ private[parquet] class CatalystPrimitiveStringConverter(parent: CatalystConverte
     parent.updateString(fieldIndex, dict(dictionaryId))
 
   override def addBinary(value: Binary): Unit =
-    parent.updateString(fieldIndex, value.toStringUsingUTF8)
+    parent.updateString(fieldIndex, value)
 }
 
 private[parquet] object CatalystArrayConverter {

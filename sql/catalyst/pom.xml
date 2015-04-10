@@ -55,6 +55,18 @@
       <artifactId>scalacheck_${scala.binary.version}</artifactId>
       <scope>test</scope>
     </dependency>
+      <dependency>
+          <groupId>com.twitter</groupId>
+          <artifactId>parquet-column</artifactId>
+          <version>${parquet.version}</version>
+      </dependency>
+      <dependency>
+          <groupId>com.twitter</groupId>
+          <artifactId>parquet-hadoop</artifactId>
+          <version>${parquet.version}</version>
+      </dependency>
+
+
   </dependencies>
   <build>
     <outputDirectory>target/scala-${scala.binary.version}/classes</outputDirectory>

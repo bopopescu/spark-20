@@ -18,6 +18,7 @@
 package org.apache.spark.sql.catalyst.expressions
 
 import org.apache.spark.sql.types._
+import parquet.io.api.Binary
 
 /**
  * A parent class for mutable container objects that are reused when the values are changed,
@@ -170,6 +171,46 @@ final class MutableByte extends MutableValue {
   }
 }
 
+final class MutableString extends MutableValue {
+  var value: String = null
+  var valueBinary: Binary = null
+  def boxed = {
+    if (isNull) null else {
+      if (valueBinary == null) {
+        value
+      } else {
+        value = valueBinary.toStringUsingUTF8
+        valueBinary = null
+        value
+      }
+    }
+  }
+  def update(v: Any) = {
+    if (v.isInstanceOf[String]) {
+      value = {
+        isNull = false
+        valueBinary = null
+        v.asInstanceOf[String]
+      }
+    } else {
+      valueBinary = {
+        isNull = false
+        value = null
+        v.asInstanceOf[Binary]
+      }
+    }
+
+  }
+  def copy() = {
+    val newCopy = new MutableString
+    newCopy.isNull = isNull
+    newCopy.value = value
+    newCopy.valueBinary = valueBinary
+    newCopy.asInstanceOf[this.type]
+  }
+}
+
+
 final class MutableAny extends MutableValue {
   var value: Any = _
   def boxed = if (isNull) null else value
@@ -202,6 +243,7 @@ final class SpecificMutableRow(val values: Array[MutableValue]) extends MutableR
         case DoubleType => new MutableDouble
         case BooleanType => new MutableBoolean
         case LongType => new MutableLong
+        case StringType => new MutableString
         case _ => new MutableAny
       }.toArray)
 
@@ -312,3 +354,41 @@ final class SpecificMutableRow(val values: Array[MutableValue]) extends MutableR
     values(i).boxed.asInstanceOf[T]
   }
 }
+
+
+import com.twitter.chill.Kryo
+import com.esotericsoftware.kryo.Serializer
+
+class MutableStringSerializer extends Serializer[MutableString] {
+
+  import com.twitter.chill.{Input, Output}
+
+      def write (kryo: Kryo, output: Output, obj: MutableString ) = {
+        if (obj.isNull) { kryo.writeClassAndObject(output, null) }
+        else {
+          if (obj.value != null) {
+            kryo.writeClassAndObject(output, obj.value)
+          } else {
+            kryo.writeClassAndObject(output, obj.valueBinary.toStringUsingUTF8)
+          }
+
+          }
+      }
+
+      def read (kryo: Kryo, input: Input, cls: Class[MutableString] ): MutableString = {
+        val m = new MutableString
+        val inp = kryo.readClassAndObject(input).asInstanceOf[String]
+        if (inp == null) {
+          m.isNull = true;
+          m.value = null
+          m.valueBinary = null
+        } else {
+          m.isNull = false
+          m.value = inp
+          m.valueBinary = null
+        }
+        m
+      }
+  }
+
+

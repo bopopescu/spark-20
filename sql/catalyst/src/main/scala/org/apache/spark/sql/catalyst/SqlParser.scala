@@ -108,6 +108,7 @@ class SqlParser extends AbstractSparkSQLParser {
   protected val STRING = Keyword("STRING")
   protected val SUBSTR = Keyword("SUBSTR")
   protected val SUBSTRING = Keyword("SUBSTRING")
+  protected val STARTSWITH = Keyword("STARTSWITH")
   protected val SUM = Keyword("SUM")
   protected val TABLE = Keyword("TABLE")
   protected val THEN = Keyword("THEN")
@@ -307,6 +308,8 @@ class SqlParser extends AbstractSparkSQLParser {
       { case s ~ p => Substring(s, p, Literal(Integer.MAX_VALUE)) }
     | (SUBSTR | SUBSTRING) ~ "(" ~> expression ~ ("," ~> expression) ~ ("," ~> expression) <~ ")" ^^
       { case s ~ p ~ l => Substring(s, p, l) }
+    | STARTSWITH ~ "(" ~> expression  ~ ("," ~> expression) <~ ")" ^^
+      { case s ~ p => StartsWith(s, p) }
     | COALESCE ~ "(" ~> repsep(expression, ",") <~ ")" ^^ { case exprs => Coalesce(exprs) }
     | SQRT  ~ "(" ~> expression <~ ")" ^^ { case exp => Sqrt(exp) }
     | ABS   ~ "(" ~> expression <~ ")" ^^ { case exp => Abs(exp) }

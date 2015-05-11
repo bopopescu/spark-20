@@ -24,6 +24,7 @@ import org.apache.hadoop.conf.Configuration
 import parquet.filter2.compat.FilterCompat
 import parquet.filter2.compat.FilterCompat._
 import parquet.filter2.predicate.FilterApi._
+import parquet.filter2.predicate.userdefined.StartsWithPredicate
 import parquet.filter2.predicate.{FilterApi, FilterPredicate}
 import parquet.io.api.Binary
 
@@ -151,6 +152,16 @@ private[sql] object ParquetFilters {
           FilterApi.gtEq(binaryColumn(n), Binary.fromByteArray(v.asInstanceOf[Array[Byte]]))
     }
 
+    val makeStWt: PartialFunction[DataType, (String, Any) => FilterPredicate] = {
+      case StringType =>
+        (n: String, v: Any) => FilterApi.userDefined(
+          binaryColumn(n), new StartsWithPredicate(v.asInstanceOf[String]))
+      case BinaryType =>
+        (n: String, v: Any) => FilterApi.userDefined(
+          binaryColumn(n), new StartsWithPredicate(
+            Binary.fromByteArray(v.asInstanceOf[Array[Byte]]).toStringUsingUTF8))
+    }
+
     // NOTE:
     //
     // For any comparison operator `cmp`, both `a cmp NULL` and `NULL cmp a` evaluate to `NULL`,
@@ -215,6 +226,16 @@ private[sql] object ParquetFilters {
         makeLtEq.lift(dataType).map(_(name, value))
       case GreaterThanOrEqual(NonNullLiteral(value, _), Cast(NamedExpression(name, _), dataType)) =>
         makeLtEq.lift(dataType).map(_(name, value))
+
+      //Entry for binStartsWith
+      case StartsWith(NamedExpression(name, _), NonNullLiteral(value, dataType)) =>
+        makeStWt.lift(dataType).map(_(name, value))
+      case StartsWith(Cast(NamedExpression(name, _), dataType), NonNullLiteral(value, _)) =>
+        makeStWt.lift(dataType).map(_(name, value))
+      case StartsWith(NonNullLiteral(value, dataType), NamedExpression(name, _)) =>
+        makeStWt.lift(dataType).map(_(name, value))
+      case StartsWith(NonNullLiteral(value, _), Cast(NamedExpression(name, _), dataType)) =>
+        makeStWt.lift(dataType).map(_(name, value))
 
       case And(lhs, rhs) =>
         (createFilter(lhs) ++ createFilter(rhs)).reduceOption(FilterApi.and)

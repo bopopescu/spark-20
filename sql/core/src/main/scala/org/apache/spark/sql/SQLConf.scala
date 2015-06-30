@@ -32,6 +32,10 @@ private[spark] object SQLConf {
   val CODEGEN_ENABLED = "spark.sql.codegen"
   val DIALECT = "spark.sql.dialect"
 
+  val PARQUET_MULTI_SCHEMA_COUNT = "spark.sql.parquet.multischema.count"
+  val PARQUET_MULTI_SCHEMA_FOOTER_LOCATION_PREFIX = "spark.sql.parquet.multischema.footerLocation:"
+  val PARQUET_MULTI_SCHEMA_PROJECTION_PREFIX = "spark.sql.parquet.multischema.projection:"
+
   val PARQUET_BINARY_AS_STRING = "spark.sql.parquet.binaryAsString"
   val PARQUET_INT96_AS_TIMESTAMP = "spark.sql.parquet.int96AsTimestamp"
   val PARQUET_CACHE_METADATA = "spark.sql.parquet.cacheMetadata"

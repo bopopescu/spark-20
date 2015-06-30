@@ -22,6 +22,10 @@ import java.math.{BigDecimal => JBigDecimal}
 import java.text.SimpleDateFormat
 import java.util.{Date, List => JList}
 
+import parquet.column.iotas.FilterUtils
+import parquet.filter2.predicate.Operators.UserDefined
+import parquet.filter2.predicate.userdefined.IndexLookupPredicate
+
 import scala.collection.JavaConversions._
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
@@ -33,7 +37,7 @@ import org.apache.hadoop.mapreduce.lib.input.FileInputFormat
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat
 import org.apache.hadoop.mapreduce.{InputSplit, Job, JobContext}
 
-import parquet.filter2.predicate.FilterApi
+import parquet.filter2.predicate.{FilterPredicate, FilterApi}
 import parquet.format.converter.ParquetMetadataConverter
 import parquet.hadoop.metadata.CompressionCodecName
 import parquet.hadoop.util.ContextUtil
@@ -417,11 +421,13 @@ private[sql] case class ParquetRelation2(
     // Push down filters when possible. Notice that not all filters can be converted to Parquet
     // filter predicate. Here we try to convert each individual predicate and only collect those
     // convertible ones.
-    predicates
+    val pushdownPredicates = predicates
       .flatMap(ParquetFilters.createFilter)
       .reduceOption(FilterApi.and)
       .filter(_ => sqlContext.conf.parquetFilterPushDown)
-      .foreach(ParquetInputFormat.setFilterPredicate(jobConf, _))
+    //TODO: Find indexed columns, remove predicates where column is not indexed
+    pushdownPredicates.foreach(ParquetInputFormat.setFilterPredicate(jobConf, _))
+    addEmbeddedSchemaRead(pushdownPredicates, jobConf)
 
     if (isPartitioned) {
       def percentRead = selectedPartitions.size.toDouble / partitions.size.toDouble * 100
@@ -547,6 +553,36 @@ private[sql] case class ParquetRelation2(
     } else {
       baseRDD.map(_._2)
     }
+  }
+
+  private def addEmbeddedSchemaRead(pushdownPredicates: Option[FilterPredicate],
+      jobConf: Configuration) : Unit = {
+    val indexPredicates = pushdownPredicates.collect {
+      case pushdownPredicate: FilterPredicate =>
+        FilterUtils.getLeafNodes(pushdownPredicate)
+          .filter(p => p.isInstanceOf[UserDefined[_, _]])
+          .map { case udp: UserDefined[_, _] => udp.getUserDefinedPredicate}
+          .filter(pred => pred.isInstanceOf[IndexLookupPredicate])
+          .map { case pred: IndexLookupPredicate => pred}
+    }.getOrElse(Nil)
+    indexPredicates.zipWithIndex.foreach{ case(indexPredicate, i) =>
+      val indexType = indexPredicate.getIndexTypeName
+      val indexColumn = indexPredicate.getIndexedColumn
+      val indexSchema = indexPredicate.getRequestedSchema
+      // TODO: lookup indexPointer from metadata
+      val indexPointer = 0L
+      // TODO: check if the base column is indexed
+      val indexReqSchema = StructType.fromAttributes(
+        convertToAttributes(
+          indexSchema,
+          sqlContext.conf.isParquetBinaryAsString,
+          sqlContext.conf.isParquetINT96AsTimestamp))
+      val reqSchemaStr = convertToString(indexReqSchema.toAttributes)
+      jobConf.set(SQLConf.PARQUET_MULTI_SCHEMA_FOOTER_LOCATION_PREFIX + i, indexPointer.toString)
+      jobConf.set(SQLConf.PARQUET_MULTI_SCHEMA_PROJECTION_PREFIX + i, reqSchemaStr)
+    }
+    jobConf.set(SQLConf.PARQUET_MULTI_SCHEMA_COUNT, indexPredicates.size.toString)
+
   }
 
   private def prunePartitions(

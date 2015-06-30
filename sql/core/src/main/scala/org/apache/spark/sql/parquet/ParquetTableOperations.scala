@@ -24,6 +24,12 @@ import java.text.NumberFormat
 import java.util.concurrent.{Callable, TimeUnit}
 import java.util.{ArrayList, Collections, Date, List => JList}
 
+import org.apache.spark.sql.parquet.ParquetTypesConverter._
+import parquet.column.iotas.FilterUtils
+import parquet.filter2.predicate.FilterPredicate
+import parquet.filter2.predicate.Operators.UserDefined
+import parquet.filter2.predicate.userdefined.IndexLookupPredicate
+
 import scala.collection.JavaConversions._
 import scala.collection.mutable
 import scala.util.Try
@@ -107,11 +113,13 @@ private[sql] case class ParquetTableScan(
     // Note 1: the input format ignores all predicates that cannot be expressed
     // as simple column predicate filters in Parquet. Here we just record
     // the whole pruning predicate.
-    ParquetFilters
+    val pushdownPredicates = ParquetFilters
       .createRecordFilter(columnPruningPred)
       .map(_.asInstanceOf[FilterPredicateCompat].getFilterPredicate)
-      // Set this in configuration of ParquetInputFormat, needed for RowGroupFiltering
-      .foreach(ParquetInputFormat.setFilterPredicate(conf, _))
+    // Set this in configuration of ParquetInputFormat, needed for RowGroupFiltering
+    //TODO: Find indexed columns, remove predicates where column is not indexed
+    pushdownPredicates.foreach(ParquetInputFormat.setFilterPredicate(conf, _))
+    addEmbeddedSchemaRead(pushdownPredicates, conf)
 
     // Tell FilteringParquetRowInputFormat whether it's okay to cache Parquet and FS metadata
     conf.set(
@@ -208,6 +216,37 @@ private[sql] case class ParquetTableScan(
       baseRDD.map(_._2)
     }
   }
+
+  private def addEmbeddedSchemaRead(pushdownPredicates: Option[FilterPredicate],
+                                    jobConf: Configuration) : Unit = {
+    val indexPredicates = pushdownPredicates.collect {
+      case pushdownPredicate: FilterPredicate =>
+        FilterUtils.getLeafNodes(pushdownPredicate)
+          .filter(p => p.isInstanceOf[UserDefined[_, _]])
+          .map { case udp: UserDefined[_, _] => udp.getUserDefinedPredicate}
+          .filter(pred => pred.isInstanceOf[IndexLookupPredicate])
+          .map { case pred: IndexLookupPredicate => pred}
+    }.getOrElse(Nil)
+    indexPredicates.zipWithIndex.foreach{ case(indexPredicate, i) =>
+      val indexType = indexPredicate.getIndexTypeName
+      val indexColumn = indexPredicate.getIndexedColumn
+      val indexSchema = indexPredicate.getRequestedSchema
+      // TODO: lookup indexPointer from metadata
+      val indexPointer = 0L
+      // TODO: check if the base column is indexed
+      val indexReqSchema = StructType.fromAttributes(
+        convertToAttributes(
+          indexSchema,
+          sqlContext.conf.isParquetBinaryAsString,
+          sqlContext.conf.isParquetINT96AsTimestamp))
+      val reqSchemaStr = convertToString(indexReqSchema.toAttributes)
+      jobConf.set(SQLConf.PARQUET_MULTI_SCHEMA_FOOTER_LOCATION_PREFIX + i, indexPointer.toString)
+      jobConf.set(SQLConf.PARQUET_MULTI_SCHEMA_PROJECTION_PREFIX + i, reqSchemaStr)
+    }
+    jobConf.set(SQLConf.PARQUET_MULTI_SCHEMA_COUNT, indexPredicates.size.toString)
+
+  }
+
 
   /**
    * Applies a (candidate) projection.

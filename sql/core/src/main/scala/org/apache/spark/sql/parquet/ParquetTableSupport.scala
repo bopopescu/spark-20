@@ -17,11 +17,14 @@
 
 package org.apache.spark.sql.parquet
 
+import java.util
 import java.util.{HashMap => JHashMap}
+import org.apache.spark.sql.SQLConf
+import scala.collection.JavaConverters._
 import org.apache.hadoop.conf.Configuration
 import parquet.column.ParquetProperties
 import parquet.hadoop.ParquetOutputFormat
-import parquet.hadoop.api.ReadSupport.ReadContext
+import parquet.hadoop.api.ReadSupport.{EmbeddedSchema, ReadContext}
 import parquet.hadoop.api.{ReadSupport, WriteSupport}
 import parquet.io.api._
 import parquet.schema.MessageType
@@ -116,7 +119,28 @@ private[parquet] class RowReadSupport extends ReadSupport[Row] with Logging {
       metadata.put(RowReadSupport.SPARK_METADATA_KEY, origAttributesStr)
     }
 
-    new ReadSupport.ReadContext(parquetSchema, metadata)
+    val embeddedSchemaList = new util.ArrayList[EmbeddedSchema]()
+    embeddedSchemaList.addAll(getEmbeddedSchemaList(configuration).asJava)
+    val batchRead = configuration.get(SQLConf.PARQUET_USE_BATCH_READ, "false").toBoolean
+    new ReadSupport.ReadContext(parquetSchema, metadata, embeddedSchemaList, batchRead)
+  }
+
+  private def getEmbeddedSchemaList(configuration: Configuration): List[EmbeddedSchema] = {
+    val indexCountStr = configuration.get(SQLConf.PARQUET_MULTI_SCHEMA_COUNT)
+    if (indexCountStr != null && !indexCountStr.trim.isEmpty) {
+      val indexCount = indexCountStr.trim.toInt
+      val embeddedSchemaList = for (i <- 0 until indexCount) yield {
+        val indexPointer = configuration.get(
+          SQLConf.PARQUET_MULTI_SCHEMA_FOOTER_LOCATION_PREFIX + i).toLong
+        val indexSchemaStr = configuration.get(SQLConf.PARQUET_MULTI_SCHEMA_PROJECTION_PREFIX + i)
+        val indexSchema = ParquetTypesConverter.convertFromAttributes(
+          ParquetTypesConverter.convertFromString(indexSchemaStr))
+        new EmbeddedSchema(indexPointer, indexSchema)
+      }
+      embeddedSchemaList.toList
+    } else {
+      List()
+    }
   }
 }
 

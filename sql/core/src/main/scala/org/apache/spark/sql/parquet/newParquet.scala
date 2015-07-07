@@ -443,6 +443,10 @@ private[sql] case class ParquetRelation2(
     val useCache = sqlContext.getConf(SQLConf.PARQUET_CACHE_METADATA, "true").toBoolean
     jobConf.set(SQLConf.PARQUET_CACHE_METADATA, useCache.toString)
 
+    // Tell RowReadSupport#prepareForRead method whether to use parquet batch read capability
+    val useBatchRead = sqlContext.getConf(SQLConf.PARQUET_USE_BATCH_READ, "false").toBoolean
+    jobConf.set(SQLConf.PARQUET_USE_BATCH_READ, useBatchRead.toString)
+
     val baseRDD =
       new NewHadoopRDD(
           sparkContext,
@@ -502,8 +506,10 @@ private[sql] case class ParquetRelation2(
 
         if (primitiveRow) {
           iterator.map { pair =>
-            // We are using CatalystPrimitiveRowConverter and it returns a SpecificMutableRow.
-            val row = pair._2.asInstanceOf[SpecificMutableRow]
+            // Cast the returned row based on whether CatalystPrimitiveRowConverter
+            // or CatalystBatchPrimitiveRowConverter is being used to produce the row.
+            val row = if (!useBatchRead) pair._2.asInstanceOf[SpecificMutableRow]
+            else pair._2.asInstanceOf[RowBatchRow]
             var i = 0
             while (i < requiredPartOrdinal.size) {
               // TODO Avoids boxing cost here!

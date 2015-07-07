@@ -18,7 +18,6 @@
 package org.apache.spark.sql.parquet
 
 import java.util.{HashMap => JHashMap}
-
 import org.apache.hadoop.conf.Configuration
 import parquet.column.ParquetProperties
 import parquet.hadoop.ParquetOutputFormat
@@ -26,10 +25,10 @@ import parquet.hadoop.api.ReadSupport.ReadContext
 import parquet.hadoop.api.{ReadSupport, WriteSupport}
 import parquet.io.api._
 import parquet.schema.MessageType
-
 import org.apache.spark.Logging
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Row}
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.SQLConf
 
 /**
  * A `parquet.io.api.RecordMaterializer` for Rows.
@@ -39,10 +38,12 @@ import org.apache.spark.sql.types._
 private[parquet] class RowRecordMaterializer(root: CatalystConverter)
   extends RecordMaterializer[Row] {
 
-  def this(parquetSchema: MessageType, attributes: Seq[Attribute]) =
-    this(CatalystConverter.createRootConverter(parquetSchema, attributes))
+  def this(parquetSchema: MessageType, attributes: Seq[Attribute], useBatchRead: Boolean) =
+    this(CatalystConverter.createRootConverter(parquetSchema, attributes, useBatchRead))
 
-  override def getCurrentRecord: Row = root.getCurrentRecord
+    override def getCurrentRecord: Row = root.getCurrentRecord
+
+  override def skipCurrentRecord: Unit = root.skipCurrentRecord
 
   override def getRootConverter: GroupConverter = root.asInstanceOf[GroupConverter]
 }
@@ -87,7 +88,8 @@ private[parquet] class RowReadSupport extends ReadSupport[Row] with Logging {
         parquetSchema, false, true)
     }
     log.debug(s"list of attributes that will be read: $schema")
-    new RowRecordMaterializer(parquetSchema, schema)
+    new RowRecordMaterializer(
+        parquetSchema, schema, conf.getBoolean(SQLConf.PARQUET_USE_BATCH_READ, false))
   }
 
   override def init(

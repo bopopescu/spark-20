@@ -118,6 +118,12 @@ private[sql] case class ParquetTableScan(
       SQLConf.PARQUET_CACHE_METADATA,
       sqlContext.getConf(SQLConf.PARQUET_CACHE_METADATA, "true"))
 
+    conf.set(
+       SQLConf.PARQUET_USE_BATCH_READ,
+       sqlContext.getConf(SQLConf.PARQUET_USE_BATCH_READ, "false"))
+    // Tell RowReadSupport#prepareForRead method whether to use parquet batch read capability
+    val useBatchRead = sqlContext.getConf(SQLConf.PARQUET_USE_BATCH_READ, "false").toBoolean
+    conf.set(SQLConf.PARQUET_USE_BATCH_READ, useBatchRead.toString)
     val baseRDD =
       new org.apache.spark.rdd.NewHadoopRDD(
         sc,
@@ -155,8 +161,11 @@ private[sql] case class ParquetTableScan(
           new Iterator[Row] {
             def hasNext = iter.hasNext
             def next() = {
-              // We are using CatalystPrimitiveRowConverter and it returns a SpecificMutableRow.
-              val row = iter.next()._2.asInstanceOf[SpecificMutableRow]
+              // Cast the returned row based on whether CatalystPrimitiveRowConverter
+              // or CatalystBatchPrimitiveRowConverter is being used to produce the row.
+              val row =
+                if (!useBatchRead) iter.next()._2.asInstanceOf[SpecificMutableRow]
+                else iter.next()._2.asInstanceOf[RowBatchRow]
 
               // Parquet will leave partitioning columns empty, so we fill them in here.
               var i = 0

@@ -77,6 +77,27 @@ class ParquetQuerySuiteBase extends QueryTest with ParquetTest {
     }
   }
 
+  test("nulls-in-row-batch") {
+    val data = (1 to 10).map { i =>
+      val x = if( i < 4 || i > 7 ) Some(i) else None
+      (x, i.toString)
+    }
+
+
+    def convToRow( x: (Option[Int], String)):Row = x._1 match {
+      case None => Row(null, x._2)
+      case Some(a) => Row(a, x._2)
+    }
+    val expected = data map { i => convToRow(i) }
+
+    withParquetTable(data, "t") {
+      val query = sql("SELECT * from t")
+
+      //println( query.collect() )
+      checkAnswer(query, expected)
+    }
+  }
+
   test("nested data - struct with array field") {
     val data = (1 to 10).map(i => Tuple1((i, Seq("val_$i"))))
     withParquetTable(data, "t") {

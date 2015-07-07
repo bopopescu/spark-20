@@ -48,7 +48,8 @@ private[sql] class SparkSqlSerializer(conf: SparkConf) extends KryoSerializer(co
 
     kryo.register(classOf[org.apache.spark.sql.catalyst.expressions.MutableString],
         new MutableStringSerializer)
-
+    kryo.register(classOf[org.apache.spark.sql.parquet.RowBatchRow],
+        new org.apache.spark.sql.parquet.RowBatchRowSerializer)
     kryo.register(classOf[com.clearspring.analytics.stream.cardinality.HyperLogLog],
                   new HyperLogLogSerializer)
     kryo.register(classOf[java.math.BigDecimal], new JavaBigDecimalSerializer)

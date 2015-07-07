@@ -150,10 +150,12 @@ private[sql] object CatalystConverter {
 
   protected[parquet] def createRootConverter(
       parquetSchema: MessageType,
-      attributes: Seq[Attribute]): CatalystConverter = {
+      attributes: Seq[Attribute],
+      useBatchRead: Boolean = false): CatalystConverter = {
     // For non-nested types we use the optimized Row converter
     if (attributes.forall(a => ParquetTypesConverter.isPrimitiveType(a.dataType))) {
-      new CatalystPrimitiveRowConverter(attributes.toArray)
+      if (useBatchRead) new CatalystBatchPrimitiveRowConverter(attributes.toArray)
+      else new CatalystPrimitiveRowConverter(attributes.toArray)
     } else {
       new CatalystGroupConverter(attributes.toArray)
     }
@@ -232,6 +234,8 @@ private[parquet] abstract class CatalystConverter extends GroupConverter {
    * @return
    */
   def getCurrentRecord: Row = throw new UnsupportedOperationException
+
+  def skipCurrentRecord: Unit = throw new UnsupportedOperationException
 
   /**
    * Read a decimal value from a Parquet Binary into "dest". Only supports decimals that fit in
@@ -363,7 +367,7 @@ private[parquet] class CatalystPrimitiveRowConverter(
 
   // Should be only called in root group converter!
   override def getCurrentRecord: Row = current
-
+  override def skipCurrentRecord: Unit = {}
   override def getConverter(fieldIndex: Int): Converter = converters(fieldIndex)
 
   // for child converters to update upstream values

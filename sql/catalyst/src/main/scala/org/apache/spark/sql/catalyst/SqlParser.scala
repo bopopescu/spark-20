@@ -60,6 +60,8 @@ class SqlParser extends AbstractSparkSQLParser {
   protected val CASE = Keyword("CASE")
   protected val CAST = Keyword("CAST")
   protected val COALESCE = Keyword("COALESCE")
+  protected val CONTAINS = Keyword("CONTAINS")
+  protected val CONTAINS_EXACT = Keyword("CONTAINS_EXACT")
   protected val COUNT = Keyword("COUNT")
   protected val DATE = Keyword("DATE")
   protected val DECIMAL = Keyword("DECIMAL")
@@ -310,6 +312,10 @@ class SqlParser extends AbstractSparkSQLParser {
       { case s ~ p ~ l => Substring(s, p, l) }
     | STARTSWITH ~ "(" ~> expression  ~ ("," ~> expression) <~ ")" ^^
       { case s ~ p => StartsWith(s, p) }
+    | CONTAINS ~ "(" ~> expression  ~ ("," ~> expression) <~ ")" ^^
+      { case s ~ p => Contains(s, p) }
+      | CONTAINS_EXACT ~ "(" ~> expression  ~ ("," ~> expression) <~ ")" ^^
+      { case s ~ p => ContainsExact(s, p) }
     | COALESCE ~ "(" ~> repsep(expression, ",") <~ ")" ^^ { case exprs => Coalesce(exprs) }
     | SQRT  ~ "(" ~> expression <~ ")" ^^ { case exp => Sqrt(exp) }
     | ABS   ~ "(" ~> expression <~ ")" ^^ { case exp => Abs(exp) }

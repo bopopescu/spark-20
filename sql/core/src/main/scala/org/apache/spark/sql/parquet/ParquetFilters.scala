@@ -24,8 +24,10 @@ import org.apache.hadoop.conf.Configuration
 import parquet.filter2.compat.FilterCompat
 import parquet.filter2.compat.FilterCompat._
 import parquet.filter2.predicate.FilterApi._
+import parquet.filter2.predicate.iotas.IndexContainsPredicate
 import parquet.filter2.predicate.userdefined.StartsWithPredicate
 import parquet.filter2.predicate.{FilterApi, FilterPredicate}
+import parquet.hadoop.metadata.EmbeddedIndexMetadata
 import parquet.io.api.Binary
 
 import org.apache.spark.SparkEnv
@@ -162,6 +164,25 @@ private[sql] object ParquetFilters {
             Binary.fromByteArray(v.asInstanceOf[Array[Byte]]).toStringUsingUTF8))
     }
 
+    def makeContains(tableName: String):
+    PartialFunction[DataType, (String, Any) => FilterPredicate] = {
+      case StringType =>
+        (n: String, v: Any) => FilterApi.userDefined(
+          intColumn("doc_id"), new IndexContainsPredicate(tableName, n,
+            v.asInstanceOf[String]))
+      case BinaryType =>
+        (n: String, v: Any) => FilterApi.userDefined(
+          intColumn("doc_id"), new IndexContainsPredicate(tableName, n,
+            Binary.fromByteArray(v.asInstanceOf[Array[Byte]]).toStringUsingUTF8))
+    }
+
+    def findIndexTableName(expression: Expression,
+        columnName: String, indexName: String): String = {
+      val columnRef = expression.references.find(_.name.equals(columnName)).get
+      columnRef.metadata.getString(EmbeddedIndexMetadata
+        .genTableNameKey(columnName, indexName))
+    }
+
     // NOTE:
     //
     // For any comparison operator `cmp`, both `a cmp NULL` and `NULL cmp a` evaluate to `NULL`,
@@ -236,6 +257,34 @@ private[sql] object ParquetFilters {
         makeStWt.lift(dataType).map(_(name, value))
       case StartsWith(NonNullLiteral(value, _), Cast(NamedExpression(name, _), dataType)) =>
         makeStWt.lift(dataType).map(_(name, value))
+
+      //Entry for Contains
+      case Contains(NamedExpression(name, _), NonNullLiteral(value, dataType)) =>
+        makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+      case Contains(Cast(NamedExpression(name, _), dataType), NonNullLiteral(value, _)) =>
+        makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+      case Contains(NonNullLiteral(value, dataType), NamedExpression(name, _)) =>
+        makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+      case Contains(NonNullLiteral(value, _), Cast(NamedExpression(name, _), dataType)) =>
+        makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+
+      //Entry for ContainsExact
+      case ContainsExact(NamedExpression(name, _), NonNullLiteral(value, dataType)) =>
+        makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+      case ContainsExact(Cast(NamedExpression(name, _), dataType), NonNullLiteral(value, _)) =>
+        makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+      case ContainsExact(NonNullLiteral(value, dataType), NamedExpression(name, _)) =>
+        makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+      case ContainsExact(NonNullLiteral(value, _), Cast(NamedExpression(name, _), dataType)) =>
+        makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
 
       case And(lhs, rhs) =>
         (createFilter(lhs) ++ createFilter(rhs)).reduceOption(FilterApi.and)

@@ -126,16 +126,16 @@ private[parquet] class RowReadSupport extends ReadSupport[Row] with Logging {
   }
 
   private def getEmbeddedSchemaList(configuration: Configuration): List[EmbeddedTableSchema] = {
-    val indexCountStr = configuration.get(SQLConf.PARQUET_MULTI_SCHEMA_COUNT)
+    val indexCountStr = configuration.get(SQLConf.PARQUET_EMBEDDED_TABLE_COUNT)
     if (indexCountStr != null && !indexCountStr.trim.isEmpty) {
       val indexCount = indexCountStr.trim.toInt
       val embeddedSchemaList = for (i <- 0 until indexCount) yield {
-        val indexPointer = configuration.get(
-          SQLConf.PARQUET_MULTI_SCHEMA_FOOTER_LOCATION_PREFIX + i).toLong
-        val indexSchemaStr = configuration.get(SQLConf.PARQUET_MULTI_SCHEMA_PROJECTION_PREFIX + i)
+        val indexPointerKey = configuration.get(
+          SQLConf.PARQUET_EMBEDDED_TABLE_FOOTER_KEY_PREFIX + i)
+        val indexSchemaStr = configuration.get(SQLConf.PARQUET_EMBEDDED_TABLE_PROJECTION_PREFIX + i)
         val indexSchema = ParquetTypesConverter.convertFromAttributes(
           ParquetTypesConverter.convertFromString(indexSchemaStr))
-        new EmbeddedTableSchema(indexPointer, indexSchema)
+        new EmbeddedTableSchema(indexPointerKey, indexSchema)
       }
       embeddedSchemaList.toList
     } else {

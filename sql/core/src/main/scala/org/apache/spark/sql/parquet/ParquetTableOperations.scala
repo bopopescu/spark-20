@@ -26,9 +26,9 @@ import java.util.{ArrayList, Collections, Date, List => JList}
 
 import org.apache.spark.sql.parquet.ParquetTypesConverter._
 import parquet.column.iotas.FilterUtils
-import parquet.filter2.predicate.FilterPredicate
+import parquet.filter2.predicate.{UserDefinedPredicate, FilterPredicate}
 import parquet.filter2.predicate.Operators.UserDefined
-import parquet.filter2.predicate.userdefined.IndexLookupPredicate
+import parquet.filter2.predicate.iotas.IndexLookupPredicate
 
 import scala.collection.JavaConversions._
 import scala.collection.mutable
@@ -44,7 +44,7 @@ import parquet.hadoop._
 import parquet.hadoop.ParquetInputFormat._
 import parquet.hadoop.api.ReadSupport.ReadContext
 import parquet.hadoop.api.{InitContext, ReadSupport}
-import parquet.hadoop.metadata.GlobalMetaData
+import parquet.hadoop.metadata.{EmbeddedIndexMetadata, GlobalMetaData}
 import parquet.hadoop.util.ContextUtil
 import parquet.io.ParquetDecodingException
 import parquet.schema.MessageType
@@ -119,7 +119,8 @@ private[sql] case class ParquetTableScan(
     // Set this in configuration of ParquetInputFormat, needed for RowGroupFiltering
     //TODO: Find indexed columns, remove predicates where column is not indexed
     pushdownPredicates.foreach(ParquetInputFormat.setFilterPredicate(conf, _))
-    addEmbeddedSchemaRead(pushdownPredicates, conf)
+    val indexLookupPredicates = extractIndexLookupPredicates(pushdownPredicates)
+    addEmbeddedSchemaRead(indexLookupPredicates, attributes, conf)
 
     // Tell FilteringParquetRowInputFormat whether it's okay to cache Parquet and FS metadata
     conf.set(
@@ -217,22 +218,32 @@ private[sql] case class ParquetTableScan(
     }
   }
 
-  private def addEmbeddedSchemaRead(pushdownPredicates: Option[FilterPredicate],
-                                    jobConf: Configuration) : Unit = {
-    val indexPredicates = pushdownPredicates.collect {
-      case pushdownPredicate: FilterPredicate =>
-        FilterUtils.getLeafNodes(pushdownPredicate)
-          .filter(p => p.isInstanceOf[UserDefined[_, _]])
-          .map { case udp: UserDefined[_, _] => udp.getUserDefinedPredicate}
-          .filter(pred => pred.isInstanceOf[IndexLookupPredicate])
-          .map { case pred: IndexLookupPredicate => pred}
+  private def findAttributeReference(output: Seq[Attribute],
+      column: String):Option[AttributeReference] =  {
+    output collect {
+      case x : AttributeReference => x
+    } find (x => x.name.equals(column))
+  }
+
+  private def extractIndexLookupPredicates(
+      pushdownPredicates: Option[FilterPredicate]) : Seq[IndexLookupPredicate] = {
+    pushdownPredicates.collect {
+      case pushdownPredicate: FilterPredicate => FilterUtils.getLeafNodes(pushdownPredicate)
+        .collect { case udp: UserDefined[_,_] => udp.getUserDefinedPredicate.asInstanceOf[AnyRef] }
+        .collect { case pred: IndexLookupPredicate => pred }
     }.getOrElse(Nil)
-    indexPredicates.zipWithIndex.foreach{ case(indexPredicate, i) =>
+  }
+
+  private def addEmbeddedSchemaRead(indexPredicates: Seq[IndexLookupPredicate],
+      columns: Seq[Attribute],
+      jobConf: Configuration) : Unit = {
+    indexPredicates.zipWithIndex.foreach { case(indexPredicate, i) =>
       val indexType = indexPredicate.getIndexTypeName
-      val indexColumn = indexPredicate.getIndexedColumn
+      val indexColumn = indexPredicate.getIndexedColumn.toDotString
       val indexSchema = indexPredicate.getRequestedSchema
-      // TODO: lookup indexPointer from metadata
-      val indexPointer = 0L
+      val columnAttr = findAttributeReference(columns, indexColumn).get
+      val footerKey = EmbeddedIndexMetadata.genFooterPosKey(indexColumn, indexType)
+      // val indexPointer = columnAttr.metadata.getString(footerKey).toLong
       // TODO: check if the base column is indexed
       val indexReqSchema = StructType.fromAttributes(
         convertToAttributes(
@@ -240,13 +251,15 @@ private[sql] case class ParquetTableScan(
           sqlContext.conf.isParquetBinaryAsString,
           sqlContext.conf.isParquetINT96AsTimestamp))
       val reqSchemaStr = convertToString(indexReqSchema.toAttributes)
-      jobConf.set(SQLConf.PARQUET_MULTI_SCHEMA_FOOTER_LOCATION_PREFIX + i, indexPointer.toString)
-      jobConf.set(SQLConf.PARQUET_MULTI_SCHEMA_PROJECTION_PREFIX + i, reqSchemaStr)
+      // Set key to the footer location instead of footer location. This is
+      // required if the query spans multiple files
+      // jobConf.set(SQLConf.PARQUET_EMBEDDED_TABLE_FOOTER_LOCATION_PREFIX + i,
+      //   indexPointer.toString)
+      jobConf.set(SQLConf.PARQUET_EMBEDDED_TABLE_FOOTER_KEY_PREFIX + i, footerKey)
+      jobConf.set(SQLConf.PARQUET_EMBEDDED_TABLE_PROJECTION_PREFIX + i, reqSchemaStr)
     }
-    jobConf.set(SQLConf.PARQUET_MULTI_SCHEMA_COUNT, indexPredicates.size.toString)
-
+    jobConf.set(SQLConf.PARQUET_EMBEDDED_TABLE_COUNT, indexPredicates.size.toString)
   }
-
 
   /**
    * Applies a (candidate) projection.

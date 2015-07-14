@@ -23,8 +23,9 @@ import java.text.SimpleDateFormat
 import java.util.{Date, List => JList}
 
 import parquet.column.iotas.FilterUtils
+import parquet.common.schema.ColumnPath
 import parquet.filter2.predicate.Operators.UserDefined
-import parquet.filter2.predicate.userdefined.IndexLookupPredicate
+import parquet.filter2.predicate.iotas.IndexLookupPredicate
 
 import scala.collection.JavaConversions._
 import scala.collection.mutable.ArrayBuffer
@@ -37,9 +38,9 @@ import org.apache.hadoop.mapreduce.lib.input.FileInputFormat
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat
 import org.apache.hadoop.mapreduce.{InputSplit, Job, JobContext}
 
-import parquet.filter2.predicate.{FilterPredicate, FilterApi}
+import parquet.filter2.predicate.{UserDefinedPredicate, FilterPredicate, FilterApi}
 import parquet.format.converter.ParquetMetadataConverter
-import parquet.hadoop.metadata.CompressionCodecName
+import parquet.hadoop.metadata.{EmbeddedIndexMetadata, CompressionCodecName}
 import parquet.hadoop.util.ContextUtil
 import parquet.hadoop.{ParquetInputFormat, _}
 
@@ -427,14 +428,21 @@ private[sql] case class ParquetRelation2(
       .filter(_ => sqlContext.conf.parquetFilterPushDown)
     //TODO: Find indexed columns, remove predicates where column is not indexed
     pushdownPredicates.foreach(ParquetInputFormat.setFilterPredicate(jobConf, _))
-    addEmbeddedSchemaRead(pushdownPredicates, jobConf)
+    val indexLookupPredicates = extractIndexLookupPredicates(pushdownPredicates)
+    addEmbeddedSchemaRead(indexLookupPredicates, output, jobConf)
 
     if (isPartitioned) {
       def percentRead = selectedPartitions.size.toDouble / partitions.size.toDouble * 100
       logInfo(s"Reading $percentRead% of partitions")
     }
 
-    val requiredColumns = output.map(_.name)
+    var requiredColumns = output.map(_.name)
+    //add doc id to the end of the list
+    //TODO: column name should be metadata driven.
+    //TODO: this column should stay hidden in the Row
+    if (!requiredColumns.contains("doc_id") && !indexLookupPredicates.isEmpty) {
+      requiredColumns = requiredColumns :+ "doc_id"
+    }
     val requestedSchema = StructType(requiredColumns.map(schema(_)))
 
     // Store both requested and original schema in `Configuration`
@@ -555,22 +563,32 @@ private[sql] case class ParquetRelation2(
     }
   }
 
-  private def addEmbeddedSchemaRead(pushdownPredicates: Option[FilterPredicate],
-      jobConf: Configuration) : Unit = {
-    val indexPredicates = pushdownPredicates.collect {
-      case pushdownPredicate: FilterPredicate =>
-        FilterUtils.getLeafNodes(pushdownPredicate)
-          .filter(p => p.isInstanceOf[UserDefined[_, _]])
-          .map { case udp: UserDefined[_, _] => udp.getUserDefinedPredicate}
-          .filter(pred => pred.isInstanceOf[IndexLookupPredicate])
-          .map { case pred: IndexLookupPredicate => pred}
+  private def findAttributeReference(output: Seq[Attribute],
+      column: String):Option[AttributeReference] =  {
+    output collect {
+      case x : AttributeReference => x
+    } find (x => x.name.equals(column))
+  }
+
+  private def extractIndexLookupPredicates(
+      pushdownPredicates: Option[FilterPredicate]) : Seq[IndexLookupPredicate] = {
+    pushdownPredicates.collect {
+      case pushdownPredicate: FilterPredicate => FilterUtils.getLeafNodes(pushdownPredicate)
+        .collect { case udp: UserDefined[_,_] => udp.getUserDefinedPredicate.asInstanceOf[AnyRef] }
+        .collect { case pred: IndexLookupPredicate => pred }
     }.getOrElse(Nil)
-    indexPredicates.zipWithIndex.foreach{ case(indexPredicate, i) =>
+  }
+
+  private def addEmbeddedSchemaRead(indexPredicates: Seq[IndexLookupPredicate],
+      columns: Seq[Attribute],
+      jobConf: Configuration) : Unit = {
+    indexPredicates.zipWithIndex.foreach { case(indexPredicate, i) =>
       val indexType = indexPredicate.getIndexTypeName
-      val indexColumn = indexPredicate.getIndexedColumn
+      val indexColumn = indexPredicate.getIndexedColumn.toDotString
       val indexSchema = indexPredicate.getRequestedSchema
-      // TODO: lookup indexPointer from metadata
-      val indexPointer = 0L
+      val columnAttr = findAttributeReference(columns, indexColumn).get
+      val footerKey = EmbeddedIndexMetadata.genFooterPosKey(indexColumn, indexType)
+      // val indexPointer = columnAttr.metadata.getString(footerKey).toLong
       // TODO: check if the base column is indexed
       val indexReqSchema = StructType.fromAttributes(
         convertToAttributes(
@@ -578,11 +596,14 @@ private[sql] case class ParquetRelation2(
           sqlContext.conf.isParquetBinaryAsString,
           sqlContext.conf.isParquetINT96AsTimestamp))
       val reqSchemaStr = convertToString(indexReqSchema.toAttributes)
-      jobConf.set(SQLConf.PARQUET_MULTI_SCHEMA_FOOTER_LOCATION_PREFIX + i, indexPointer.toString)
-      jobConf.set(SQLConf.PARQUET_MULTI_SCHEMA_PROJECTION_PREFIX + i, reqSchemaStr)
+      // Set key to the footer location instead of footer location. This is
+      // required if the query spans multiple files
+      // jobConf.set(SQLConf.PARQUET_EMBEDDED_TABLE_FOOTER_LOCATION_PREFIX + i,
+      //   indexPointer.toString)
+      jobConf.set(SQLConf.PARQUET_EMBEDDED_TABLE_FOOTER_KEY_PREFIX + i, footerKey)
+      jobConf.set(SQLConf.PARQUET_EMBEDDED_TABLE_PROJECTION_PREFIX + i, reqSchemaStr)
     }
-    jobConf.set(SQLConf.PARQUET_MULTI_SCHEMA_COUNT, indexPredicates.size.toString)
-
+    jobConf.set(SQLConf.PARQUET_EMBEDDED_TABLE_COUNT, indexPredicates.size.toString)
   }
 
   private def prunePartitions(
@@ -724,10 +745,7 @@ private[sql] object ParquetRelation2 {
             parquetSchema,
             sqlContext.conf.isParquetBinaryAsString,
             sqlContext.conf.isParquetINT96AsTimestamp,
-          // Note: workaround for the bug with column names
-            metadata.getKeyValueMetaData.toMap.map {
-              x => (x._1.replace("doc_val", "doc_value"), x._2)
-            }))
+            metadata.getKeyValueMetaData.toMap))
       }
     }.reduceOption { (left, right) =>
       try left.merge(right) catch { case e: Throwable =>

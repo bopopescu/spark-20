@@ -182,9 +182,19 @@ trait StringComparison {
 
 /**
  * A function that returns true if the string `left` contains the string `right`.
+ * This is case insensitive
  */
 case class Contains(left: Expression, right: Expression)
     extends BinaryExpression with StringComparison {
+  override def compare(l: String, r: String) = l.toLowerCase
+    .contains(r.toLowerCase)
+}
+
+/**
+ * A function that returns true if the string `left` contains the string `right`.
+ */
+case class ContainsExact(left: Expression, right: Expression)
+  extends BinaryExpression with StringComparison {
   override def compare(l: String, r: String) = l.contains(r)
 }
 

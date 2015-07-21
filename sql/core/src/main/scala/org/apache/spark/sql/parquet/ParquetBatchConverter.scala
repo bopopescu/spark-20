@@ -42,14 +42,26 @@ private[parquet] object CatalystBatchConverter {
       fieldIndex: Int): CatalystBatchPrimitiveConverter = {
     val fieldType: DataType = field.dataType
     fieldType match {
-      case BinaryType =>
-        new CatalystBatchBinaryConverter(fieldType, fieldIndex)
-      case StringType =>
-        new CatalystBatchStringConverter(fieldType, fieldIndex)
-      // All other primitive types use the default converter
-      case ctype: PrimitiveType => { // note: need the type tag here!
-        new CatalystBatchPrimitiveConverter(fieldType, fieldIndex)
-      }
+      case dt: BooleanType =>
+        new CatalystBatchBooleanConverter(dt, fieldIndex)
+      case dt: ByteType =>
+        new CatalystBatchByteConverter(dt, fieldIndex)
+      case dt: ShortType =>
+        new CatalystBatchShortConverter(dt, fieldIndex)
+      case dt: IntegerType =>
+        new CatalystBatchIntConverter(dt, fieldIndex)
+      case dt: LongType =>
+        new CatalystBatchLongConverter(dt, fieldIndex)
+      case dt: FloatType =>
+        new CatalystBatchFloatConverter(dt, fieldIndex)
+      case dt: DoubleType =>
+        new CatalystBatchDoubleConverter(dt, fieldIndex)
+      case dt: BinaryType =>
+        new CatalystBatchBinaryConverter(dt, fieldIndex)
+      case dt: StringType =>
+        new CatalystBatchStringConverter(dt, fieldIndex)
+      case dt: DecimalType =>
+        new CatalystBatchDecimalConverter(dt, fieldIndex)
       case _ => throw new RuntimeException(
         s"unable to convert datatype ${field.dataType.toString} in CatalystConverter")
     }
@@ -112,11 +124,22 @@ class RowBatch(schema: Array[FieldType], val converters: Array[CatalystBatchPrim
   }
 
   def end() = {
-    numRows = converters(0).numRows
-    if (!converters.forall(_.numRows == numRows)) {
-      val lengths = converters.map{_.numRows}.deep
-      sys.error(s"each column in a batch doesn't have same number of values: ${lengths}")
+    var i = 0
+    var firstNonZeroNumRows = 0
+    while (i < converters.length) {
+      val c = converters(i).numRows
+      if (firstNonZeroNumRows == 0) {
+        firstNonZeroNumRows = c
+      } else {
+        // take into account partition columns that will have only a row or so
+        if (c > 0 && c != firstNonZeroNumRows) {
+          val lengths = converters.map{_.numRows}.deep
+          sys.error(s"each column in a batch doesn't have same number of values: ${lengths}")
+        }
+      }
+      i += 1
     }
+    numRows = firstNonZeroNumRows
   }
 
   private[this] def newValueArray() = new Array[Any](schema.length)
@@ -156,9 +179,9 @@ final class RowBatchRow(
   override def setBoolean(i: Int, value: Boolean) = if (batch == null) values.update(i, value)
     else batch.converters(i).setBoolean(_index, value)
   override def setShort(i: Int, value: Short) = if (batch == null) values.update(i, value)
-    else batch.converters(i).setInt(_index, value)
+    else batch.converters(i).setShort(_index, value)
   override def setByte(i: Int, value: Byte) = if (batch == null) values.update(i, value)
-    else batch.converters(i).setInt(_index, value)
+    else batch.converters(i).setByte(_index, value)
   override def setFloat(i: Int, value: Float) = if (batch == null) values.update(i, value)
     else batch.converters(i).setFloat(_index, value)
   override def setString(i: Int, value: String) = if (batch == null) values.update(i, value)
@@ -187,10 +210,10 @@ final class RowBatchRow(
     if (batch != null) batch.converters(i).getBoolean(_index)
     else values(i).asInstanceOf[Boolean]
   override def getShort(i: Int): Short =
-    if (batch != null) batch.converters(i).getInt(_index).asInstanceOf[Short]
+    if (batch != null) batch.converters(i).getShort(_index)
     else values(i).asInstanceOf[Short]
   override def getByte(i: Int): Byte =
-    if (batch != null) batch.converters(i).getInt(_index).asInstanceOf[Byte]
+    if (batch != null) batch.converters(i).getByte(_index)
     else values(i).asInstanceOf[Byte]
   override def getString(i: Int): String =
     if (batch != null) batch.converters(i).getString(_index)
@@ -205,6 +228,7 @@ final class RowBatchRow(
       while (i < values.length) {
         val converter = batch.converters(i)
         if (!converter.isNullValue(_index)) values.update(i, converter(_index))
+        else values.update(i, null)
         i += 1
       }
       valuesCopied = true
@@ -232,7 +256,7 @@ final class RowBatchRow(
  * @param batch The store where a batch of values are stored for the field
  * @param fieldIndex The index inside the record.
  */
-private[parquet] class CatalystBatchPrimitiveConverter(
+private[parquet] abstract class CatalystBatchPrimitiveConverter(
     fieldType: DataType,
     fieldIndex: Int) extends PrimitiveConverter {
   override def hasBatchSupport: Boolean = true
@@ -240,48 +264,12 @@ private[parquet] class CatalystBatchPrimitiveConverter(
   private[this] var _numRows = 0
   private[this] var readIndex = 0
   val nullFlags = new Array[Boolean](maxNumRows)
-  val colVals: Array[_] =  fieldType match {
-      case BooleanType => Array.ofDim[Boolean](maxNumRows)
-      case ByteType => Array.ofDim[Int](maxNumRows)
-      case ShortType => Array.ofDim[Int](maxNumRows)
-      case IntegerType => Array.ofDim[Int](maxNumRows)
-      case LongType => Array.ofDim[Long](maxNumRows)
-      case FloatType => Array.ofDim[Float](maxNumRows)
-      case DoubleType => Array.ofDim[Double](maxNumRows)
-      case StringType => Array.ofDim[Binary](maxNumRows)
-      case BinaryType => Array.ofDim[Binary](maxNumRows)
-      case _ => sys.error(s"${fieldType} is not supported as a primitive data type")
-    }
   private[parquet] def numRows = _numRows
   private[parquet] def numRows_=(size: Int) = _numRows = size
-  private[this] def checkMaxSize(size: Int) = if (size > maxNumRows) {
+  protected[this] def checkMaxSize(size: Int) = if (size > maxNumRows) {
     sys.error(s"Can't support batch size $size, only upto $maxNumRows supported")
   }
   override def getNullIndicatorBatchStore(maxSize: Int) = { checkMaxSize(maxSize); nullFlags }
-  override def getBooleanBatchStore(maxSize: Int) = {
-    checkMaxSize(maxSize);
-    colVals.asInstanceOf[Array[Boolean]]
-  }
-  override def getIntBatchStore(maxSize: Int) = {
-    checkMaxSize(maxSize);
-    colVals.asInstanceOf[Array[Int]]
-  }
-  override def getLongBatchStore(maxSize: Int) = {
-    checkMaxSize(maxSize);
-    colVals.asInstanceOf[Array[Long]]
-  }
-  override def getFloatBatchStore(maxSize: Int) = {
-    checkMaxSize(maxSize);
-    colVals.asInstanceOf[Array[Float]]
-  }
-  override def getDoubleBatchStore(maxSize: Int) = {
-    checkMaxSize(maxSize);
-    colVals.asInstanceOf[Array[Double]]
-  }
-  override def getBinaryBatchStore(maxSize: Int) = {
-    checkMaxSize(maxSize);
-    colVals.asInstanceOf[Array[Binary]]
-  }
   override def startOfBatchOp = {}
   override def endOfBatchOp(filledBatchSize: Int) = {
     readIndex = 0
@@ -293,49 +281,210 @@ private[parquet] class CatalystBatchPrimitiveConverter(
    * by CatalystBatchPrimitiveRowConverter, just like a row returned by
    * CatalystPrimitiveRowConverter supports these methods.
    */
-  private[parquet] def apply(i: Int): Any = {
-    if (isNullValue(i)) null else colVals(i)
-  }
-  private[parquet] def update(i: Int, v: Any): Any = {
-    if (v == null) nullFlags(i) = true else {
-      nullFlags(i) = false
-      colVals.asInstanceOf[Array[Any]](i) = v
-    }
-  }
+  private[this] val unsupported = s"unsupported by ${getClass.getName}"
+  private[parquet] def apply(i: Int): Any
+  private[parquet] def update(i: Int, v: Any): Unit
   private[parquet] def isNullValue(i: Int) = nullFlags(i)
   private[parquet] def setNullValue(i: Int) = nullFlags(i) = true
-  private[parquet] def getBoolean(i: Int) = colVals.asInstanceOf[Array[Boolean]](i)
-  private[parquet] def setBoolean(i: Int, v: Boolean) = {
+  private[parquet] def getBoolean(i: Int): Boolean = sys.error(unsupported)
+  private[parquet] def setBoolean(i: Int, v: Boolean): Unit = sys.error(unsupported)
+  private[parquet] def getByte(i: Int): Byte = sys.error(unsupported)
+  private[parquet] def setByte(i: Int, v: Byte): Unit = sys.error(unsupported)
+  private[parquet] def getShort(i: Int): Short = sys.error(unsupported)
+  private[parquet] def setShort(i: Int, v: Short): Unit = sys.error(unsupported)
+  private[parquet] def getInt(i: Int): Int = sys.error(unsupported)
+  private[parquet] def setInt(i: Int, v: Int): Unit = sys.error(unsupported)
+  private[parquet] def getLong(i: Int): Long = sys.error(unsupported)
+  private[parquet] def setLong(i: Int, v: Long): Unit = sys.error(unsupported)
+  private[parquet] def getFloat(i: Int): Float = sys.error(unsupported)
+  private[parquet] def setFloat(i: Int, v: Float): Unit = sys.error(unsupported)
+  private[parquet] def getDouble(i: Int): Double = sys.error(unsupported)
+  private[parquet] def setDouble(i: Int, v: Double): Unit = sys.error(unsupported)
+  private[parquet] def getBinary(i: Int): Binary = sys.error(unsupported)
+  private[parquet] def setBinary(i: Int, v: Binary): Unit = sys.error(unsupported)
+  private[parquet] def getString(i: Int): String = sys.error(unsupported)
+  private[parquet] def setString(i: Int, v: String): Unit = sys.error(unsupported)
+}
+
+private[parquet] class CatalystBatchBooleanConverter(
+    fieldType: BooleanType,
+    fieldIndex: Int) extends CatalystBatchPrimitiveConverter(fieldType, fieldIndex) {
+  val booleanColVals = new Array[Boolean](maxNumRows)
+  override def getBooleanBatchStore(maxSize: Int) = {
+    checkMaxSize(maxSize)
+    booleanColVals
+  }
+
+  private[parquet] override def getBoolean(i: Int) = booleanColVals(i)
+  private[parquet] override def setBoolean(i: Int, v: Boolean) = {
     nullFlags(i) = false
-    colVals.asInstanceOf[Array[Boolean]](i) = v
+    booleanColVals(i) = v
   }
-  private[parquet] def getInt(i: Int) = colVals.asInstanceOf[Array[Int]](i)
-  private[parquet] def setInt(i: Int, v: Int) = {
+
+  override def apply(i: Int): Any = if (nullFlags(i)) null else booleanColVals(i)
+
+  private[parquet] override def update(i: Int, v: Any): Unit = {
+    // Used only for setting partition values.
+    if (v == null) nullFlags(i) = true else {
+      nullFlags(i) = false
+      booleanColVals(i) = v.asInstanceOf[Boolean]
+    }
+  }
+}
+
+private[parquet] class CatalystBatchByteConverter(
+    fieldType: ByteType,
+    fieldIndex: Int) extends CatalystBatchPrimitiveConverter(fieldType, fieldIndex) {
+  val intColVals = new Array[Int](maxNumRows)
+  override def getIntBatchStore(maxSize: Int) = {
+    checkMaxSize(maxSize)
+    intColVals
+  }
+
+  private[parquet] override def getByte(i: Int) = intColVals(i).asInstanceOf[Byte]
+  private[parquet] override def setByte(i: Int, v: Byte) = {
     nullFlags(i) = false
-    colVals.asInstanceOf[Array[Int]](i) = v
+    intColVals(i) = v
   }
-  private[parquet] def getLong(i: Int) = colVals.asInstanceOf[Array[Long]](i)
-  private[parquet] def setLong(i: Int, v: Long) = {
+
+  override def apply(i: Int): Any = if (nullFlags(i)) null else intColVals(i).toByte
+
+  private[parquet] override def update(i: Int, v: Any): Unit = {
+    // Used only for setting partition values.
+    if (v == null) nullFlags(i) = true else {
+      nullFlags(i) = false
+      intColVals(i) = v.asInstanceOf[Byte].toInt
+    }
+  }
+}
+
+private[parquet] class CatalystBatchShortConverter(
+    fieldType: ShortType,
+    fieldIndex: Int) extends CatalystBatchPrimitiveConverter(fieldType, fieldIndex) {
+  val intColVals = new Array[Int](maxNumRows)
+  override def getIntBatchStore(maxSize: Int) = {
+    checkMaxSize(maxSize)
+    intColVals
+  }
+
+  private[parquet] override def getShort(i: Int) = intColVals(i).asInstanceOf[Short]
+  private[parquet] override def setShort(i: Int, v: Short) = {
     nullFlags(i) = false
-    colVals.asInstanceOf[Array[Long]](i) = v
+    intColVals(i) = v
   }
-  private[parquet] def getFloat(i: Int) = colVals.asInstanceOf[Array[Float]](i)
-  private[parquet] def setFloat(i: Int, v: Float) = {
+
+  override def apply(i: Int): Any = if (nullFlags(i)) null else intColVals(i).toShort
+
+  private[parquet] override def update(i: Int, v: Any): Unit = {
+    // Used only for setting partition values.
+    if (v == null) nullFlags(i) = true else {
+      nullFlags(i) = false
+      intColVals(i) = v.asInstanceOf[Short].toInt
+    }
+  }
+}
+
+private[parquet] class CatalystBatchIntConverter(
+    fieldType: IntegerType,
+    fieldIndex: Int) extends CatalystBatchPrimitiveConverter(fieldType, fieldIndex) {
+  val intColVals = new Array[Int](maxNumRows)
+  override def getIntBatchStore(maxSize: Int) = {
+    checkMaxSize(maxSize)
+    intColVals
+  }
+
+  private[parquet] override def getInt(i: Int) = intColVals(i)
+  private[parquet] override def setInt(i: Int, v: Int) = {
     nullFlags(i) = false
-    colVals.asInstanceOf[Array[Float]](i) = v
+    intColVals(i) = v
   }
-  private[parquet] def getDouble(i: Int) = colVals.asInstanceOf[Array[Double]](i)
-  private[parquet] def setDouble(i: Int, v: Double) = {
+
+  override def apply(i: Int): Any = if (nullFlags(i)) null else intColVals(i)
+
+  private[parquet] override def update(i: Int, v: Any): Unit = {
+    // Used only for setting partition values.
+    if (v == null) nullFlags(i) = true else {
+      nullFlags(i) = false
+      intColVals(i) = v.asInstanceOf[Int]
+    }
+  }
+}
+
+private[parquet] class CatalystBatchLongConverter(
+    fieldType: LongType,
+    fieldIndex: Int) extends CatalystBatchPrimitiveConverter(fieldType, fieldIndex) {
+  val longColVals = new Array[Long](maxNumRows)
+  override def getLongBatchStore(maxSize: Int) = {
+    checkMaxSize(maxSize)
+    longColVals
+  }
+
+  private[parquet] override def getLong(i: Int) = longColVals(i)
+  private[parquet] override def setLong(i: Int, v: Long) = {
     nullFlags(i) = false
-    colVals.asInstanceOf[Array[Double]](i) = v
+    longColVals(i) = v
   }
-  private[parquet] def getBinary(i: Int) = colVals.asInstanceOf[Array[Binary]](i)
-  private[parquet] def setBinary(i: Int, v: Binary) = {
-    if (v == null) nullFlags(i) = true else nullFlags(i) = false
-    colVals.asInstanceOf[Array[Binary]](i) = v
+
+  override def apply(i: Int): Any = if (nullFlags(i)) null else longColVals(i)
+
+  private[parquet] override def update(i: Int, v: Any): Unit = {
+    // Used only for setting partition values.
+    if (v == null) nullFlags(i) = true else {
+      nullFlags(i) = false
+      longColVals(i) = v.asInstanceOf[Long]
+    }
   }
-  private[parquet] def getString(i: Int): String = throw new UnsupportedOperationException   
-  private[parquet] def setString(i: Int, v: String): Unit = throw new UnsupportedOperationException
+}
+
+private[parquet] class CatalystBatchFloatConverter(
+    fieldType: FloatType,
+    fieldIndex: Int) extends CatalystBatchPrimitiveConverter(fieldType, fieldIndex) {
+  val floatColVals = new Array[Float](maxNumRows)
+  override def getFloatBatchStore(maxSize: Int) = {
+    checkMaxSize(maxSize)
+    floatColVals
+  }
+
+  private[parquet] override def getFloat(i: Int) = floatColVals(i)
+  private[parquet] override def setFloat(i: Int, v: Float) = {
+    nullFlags(i) = false
+    floatColVals(i) = v
+  }
+  override def apply(i: Int): Any = if (nullFlags(i)) null else floatColVals(i)
+
+  private[parquet] override def update(i: Int, v: Any): Unit = {
+    // Used only for setting partition values.
+    if (v == null) nullFlags(i) = true else {
+      nullFlags(i) = false
+      floatColVals(i) = v.asInstanceOf[Float]
+    }
+  }
+}
+
+private[parquet] class CatalystBatchDoubleConverter(
+    fieldType: DoubleType,
+    fieldIndex: Int) extends CatalystBatchPrimitiveConverter(fieldType, fieldIndex) {
+  val doubleColVals = new Array[Double](maxNumRows)
+  override def getDoubleBatchStore(maxSize: Int) = {
+    checkMaxSize(maxSize)
+    doubleColVals
+  }
+
+  private[parquet] override def getDouble(i: Int) = doubleColVals(i)
+  private[parquet] override def setDouble(i: Int, v: Double) = {
+    nullFlags(i) = false
+    doubleColVals(i) = v
+  }
+
+  override def apply(i: Int): Any = if (nullFlags(i)) null else doubleColVals(i)
+
+  private[parquet] override def update(i: Int, v: Any): Unit = {
+    // Used only for setting partition values.
+    if (v == null) nullFlags(i) = true else {
+      nullFlags(i) = false
+      doubleColVals(i) = v.asInstanceOf[Double]
+    }
+  }
 }
 
 /**
@@ -347,16 +496,21 @@ private[parquet] class CatalystBatchPrimitiveConverter(
  * @param fieldType The type of the field.
  * @param fieldIndex The index of the field inside the record.
  */
-private[parquet] class CatalystBatchBinaryConverter(fieldType: DataType, fieldIndex: Int)
+private[parquet] class CatalystBatchBinaryConverter(fieldType: BinaryType, fieldIndex: Int)
   extends CatalystBatchPrimitiveConverter(fieldType, fieldIndex) {
 
   private[this] var dict: Array[Array[Byte]] = null
   private[this] var dictLookupBatchStore: Array[Int] = null
-  private[this] val convertedVals = new Array[Array[Byte]](colVals.length)
-  private[this] val colValsBinary = colVals.asInstanceOf[Array[Binary]]
+  private[this] val colValsBinary = new Array[Binary](maxNumRows)
+  private[this] val convertedVals = new Array[Array[Byte]](maxNumRows)
+  override def getBinaryBatchStore(maxSize: Int) = {
+    checkMaxSize(maxSize)
+    colValsBinary
+  }
+
   private[this] def initConvertedVals() {
     var i = 0
-    while (i < colVals.length) {
+    while (i < convertedVals.length) {
       convertedVals(i) = null
       i += 1
     }
@@ -390,6 +544,12 @@ private[parquet] class CatalystBatchBinaryConverter(fieldType: DataType, fieldIn
    * The following methods exist to support MutableRow semantics in a row returned by
    * a CatalystPrimitiveRowConverter
    */
+  private[parquet] override def getBinary(i: Int) = colValsBinary(i)
+  private[parquet] override def setBinary(i: Int, v: Binary) = {
+    if (v == null) nullFlags(i) = true else nullFlags(i) = false
+    colValsBinary(i) = v
+  }
+
   private[parquet] override def apply(i: Int): Any = {
     if (isNullValue(i)) null else {
       val bytes = convertedVals(i)
@@ -406,9 +566,18 @@ private[parquet] class CatalystBatchBinaryConverter(fieldType: DataType, fieldIn
 
   private[parquet] override def setString(i: Int, v: String) = {
     if (v == null) nullFlags(i) = true else {
-      colValsBinary(i) = Binary.fromString(v)
       nullFlags(i) = false
+      colValsBinary(i) = Binary.fromString(v)
       convertedVals(i) = null
+    }
+  }
+
+  private[parquet] override def update(i: Int, v: Any): Unit = {
+    // Assumption: Used only for setting partition values. So, the corresponding
+    // binary values needn't be filled in.
+    if (v == null) nullFlags(i) = true else {
+      nullFlags(i) = false
+      convertedVals(i) = v.asInstanceOf[Array[Byte]]
     }
   }
 }
@@ -422,16 +591,21 @@ private[parquet] class CatalystBatchBinaryConverter(fieldType: DataType, fieldIn
  * @param fieldType The type of the field.
  * @param fieldIndex The index of the field inside the record.
  */
-private[parquet] class CatalystBatchStringConverter(fieldType: DataType, fieldIndex: Int)
+private[parquet] class CatalystBatchStringConverter(fieldType: StringType, fieldIndex: Int)
   extends CatalystBatchPrimitiveConverter(fieldType, fieldIndex) {
 
   private[this] var dict: Array[String] = null
   private[this] var dictLookupBatchStore: Array[Int] = null
-  private[this] val convertedVals = new Array[String](colVals.length)
-  private[this] val colValsBinary = colVals.asInstanceOf[Array[Binary]]
+  private[this] val colValsBinary = new Array[Binary](maxNumRows)
+  private[this] val convertedVals = new Array[String](maxNumRows)
+  override def getBinaryBatchStore(maxSize: Int) = {
+    checkMaxSize(maxSize)
+    colValsBinary
+  }
+
   private[this] def initConvertedVals() {
     var i = 0
-    while (i < colVals.length) {
+    while (i < convertedVals.length) {
       convertedVals(i) = null
       i += 1
     }
@@ -473,7 +647,7 @@ private[parquet] class CatalystBatchStringConverter(fieldType: DataType, fieldIn
     val s = convertedVals(i)
     if (s != null) s else {
       val v = colValsBinary(i)
-      val s = v.toStringUsingUTF8
+      val s = if (v != null) v.toStringUsingUTF8 else null
       convertedVals(i) = s
       s
     }
@@ -483,6 +657,125 @@ private[parquet] class CatalystBatchStringConverter(fieldType: DataType, fieldIn
     if (v == null) nullFlags(i) = true else {
       convertedVals(i) = v
       nullFlags(i) = false
+    }
+  }
+
+  private[parquet] override def update(i: Int, v: Any): Unit = {
+    // Assumption: Used only for setting partition values. So, the corresponding
+    // storage type values needn't be filled in.
+    if (v == null) nullFlags(i) = true else {
+      nullFlags(i) = false
+      convertedVals(i) = v.asInstanceOf[String]
+    }
+  }
+}
+
+/**
+ * A `parquet.io.api.PrimitiveConverter` that converts Parquet Binary to Decimal.
+ * Supports dictionaries to reduce Binary to Decimal conversion overhead.
+ *
+ * Follows pattern in Parquet of using dictionaries, where supported, for Decimal conversion.
+ *
+ * @param fieldType The type of the field.
+ * @param fieldIndex The index of the field inside the record.
+ */
+private[parquet] class CatalystBatchDecimalConverter(fieldType: DecimalType, fieldIndex: Int)
+  extends CatalystBatchPrimitiveConverter(fieldType, fieldIndex) {
+
+  private[this] var dict: Array[Decimal] = null
+  private[this] var dictLookupBatchStore: Array[Int] = null
+  private[this] var dictInUse: Boolean = false
+  private[this] val colValsBinary = new Array[Binary](maxNumRows)
+  private[this] val convertedVals = Array.tabulate(maxNumRows) { i => new Decimal() }
+  override def getBinaryBatchStore(maxSize: Int) = {
+    checkMaxSize(maxSize)
+    colValsBinary
+  }
+
+  override def hasDictionarySupport: Boolean = true
+
+  /**
+   * Read a decimal value from a Parquet Binary into "dest". Only supports decimals that fit in
+   * a long (i.e. precision <= 18)
+   */
+  private[this] def readDecimal(dest: Decimal, value: Binary, ctype: DecimalType): Decimal = {
+    val precision = ctype.precisionInfo.get.precision
+    val scale = ctype.precisionInfo.get.scale
+    val bytes = value.getBytes
+    require(bytes.length <= 16, "Decimal field too large to read")
+    var unscaled = 0L
+    var i = 0
+    while (i < bytes.length) {
+      unscaled = (unscaled << 8) | (bytes(i) & 0xFF)
+      i += 1
+    }
+    // Make sure unscaled has the right sign, by sign-extending the first bit
+    val numBits = 8 * bytes.length
+    unscaled = (unscaled << (64 - numBits)) >> (64 - numBits)
+    dest.setOrNull(unscaled, precision, scale)
+  }
+
+  override def setDictionary(dictionary: Dictionary): Unit = {
+    // Need one extra slot to hold the partition value when dictionary
+    // is in use. See update(i: Int, v: Any) implementation of this class.
+    dict = Array.tabulate(dictionary.getMaxId + 2) { i => {
+      val d = new Decimal()
+      if (i <= dictionary.getMaxId) readDecimal(d, dictionary.decodeToBinary(i), fieldType)
+      else d
+    }}
+  }
+
+  override def getDictLookupBatchStore(maxSize: Int) = {
+    dictLookupBatchStore = new Array[Int](maxSize)
+    dictLookupBatchStore
+  }
+
+  override def endOfDictBatchOp(filledBatchSize:Int): Unit = {
+    super.endOfBatchOp(filledBatchSize)
+    dictInUse = true
+  }
+
+  override def endOfBatchOp(filledBatchSize:Int): Unit = {
+    super.endOfBatchOp(filledBatchSize)
+    dictInUse = false
+  }
+
+  private[this] def getDecimal(i: Int): BigDecimal = {
+    if (isNullValue(i)) null else {
+      if (!dictInUse) {
+        val d = convertedVals(i)
+        readDecimal(d, colValsBinary(i), fieldType)
+        d.toBigDecimal
+      } else {
+        dict(dictLookupBatchStore(i)).toBigDecimal
+      }
+    }
+  }
+
+  /*
+   * The following methods exist to support MutableRow semantics in a row returned by
+   * a CatalystPrimitiveRowConverter
+   */
+  private[parquet] override def apply(i: Int): Any = getDecimal(i)
+  private[parquet] override def getString(i: Int): String = {
+    val d = getDecimal(i)
+    if (d eq null) null else d.toString
+  }
+
+  private[parquet] override def update(i: Int, v: Any): Unit = {
+    // Assumption: Used only for setting partition values. So, the corresponding
+    // storage type values needn't be filled in.
+    if (v == null) nullFlags(i) = true else {
+      nullFlags(i) = false
+      val bd = v.asInstanceOf[BigDecimal]
+      if (dictInUse) {
+        val d = dict(dict.length - 1)
+        d.set(bd, fieldType.precision, fieldType.scale)
+        dict(dict.length - 1) = d
+        dictLookupBatchStore(i) = dict.length - 1
+      } else {
+        convertedVals(i).set(bd, fieldType.precision, fieldType.scale)
+      }
     }
   }
 }

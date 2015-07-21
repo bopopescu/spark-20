@@ -19,12 +19,13 @@ package org.apache.spark.sql.parquet
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.hadoop.fs.Path
+import org.scalatest.BeforeAndAfterAll
 
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.parquet.ParquetRelation2._
 import org.apache.spark.sql.test.TestSQLContext
 import org.apache.spark.sql.types._
-import org.apache.spark.sql.{QueryTest, Row, SQLContext}
+import org.apache.spark.sql.{QueryTest, Row, SQLContext, SQLConf}
 
 // The data where the partitioning key exists only in the directory structure.
 case class ParquetData(intField: Int, stringField: String)
@@ -339,5 +340,18 @@ class ParquetPartitionDiscoverySuite extends QueryTest with ParquetTest {
           (1 to 10).map(i => Row(i, null, 1)) ++ (1 to 10).map(i => Row(i, i.toString, 2)))
       }
     }
+  }
+}
+
+class ParquetBatchReadPartDiscoverySuite extends ParquetPartitionDiscoverySuite
+    with BeforeAndAfterAll {
+  val origBatchReadConf = sqlContext.conf.parquetUseBatchRead
+
+  override protected def beforeAll(): Unit = {
+    sqlContext.conf.setConf(SQLConf.PARQUET_USE_BATCH_READ, "true")
+  }
+
+  override protected def afterAll(): Unit = {
+    sqlContext.setConf(SQLConf.PARQUET_USE_BATCH_READ, origBatchReadConf.toString)
   }
 }

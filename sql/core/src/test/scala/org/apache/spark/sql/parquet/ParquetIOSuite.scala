@@ -333,24 +333,30 @@ class ParquetIOSuiteBase extends QueryTest with ParquetTest {
 
 class ParquetDataSourceOnIOSuite extends ParquetIOSuiteBase with BeforeAndAfterAll {
   val originalConf = sqlContext.conf.parquetUseDataSourceApi
+  val origBatchReadConf = sqlContext.conf.parquetUseBatchRead
 
   override protected def beforeAll(): Unit = {
     sqlContext.conf.setConf(SQLConf.PARQUET_USE_DATA_SOURCE_API, "true")
+    sqlContext.conf.setConf(SQLConf.PARQUET_USE_BATCH_READ, "true")
   }
 
   override protected def afterAll(): Unit = {
     sqlContext.setConf(SQLConf.PARQUET_USE_DATA_SOURCE_API, originalConf.toString)
+    sqlContext.setConf(SQLConf.PARQUET_USE_BATCH_READ, origBatchReadConf.toString)
   }
 }
 
 class ParquetDataSourceOffIOSuite extends ParquetIOSuiteBase with BeforeAndAfterAll {
   val originalConf = sqlContext.conf.parquetUseDataSourceApi
+  val origBatchReadConf = sqlContext.conf.parquetUseBatchRead
 
   override protected def beforeAll(): Unit = {
     sqlContext.conf.setConf(SQLConf.PARQUET_USE_DATA_SOURCE_API, "false")
+    sqlContext.conf.setConf(SQLConf.PARQUET_USE_BATCH_READ, "false")
   }
 
   override protected def afterAll(): Unit = {
     sqlContext.setConf(SQLConf.PARQUET_USE_DATA_SOURCE_API, originalConf.toString)
+    sqlContext.setConf(SQLConf.PARQUET_USE_BATCH_READ, origBatchReadConf.toString)
   }
 }

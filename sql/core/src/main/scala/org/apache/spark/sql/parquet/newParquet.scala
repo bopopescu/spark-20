@@ -450,7 +450,7 @@ private[sql] case class ParquetRelation2(
     jobConf.set(SQLConf.PARQUET_CACHE_METADATA, useCache.toString)
 
     // Tell RowReadSupport#prepareForRead method whether to use parquet batch read capability
-    val useBatchRead = sqlContext.getConf(SQLConf.PARQUET_USE_BATCH_READ, "false").toBoolean
+    val useBatchRead = sqlContext.conf.parquetUseBatchRead
     jobConf.set(SQLConf.PARQUET_USE_BATCH_READ, useBatchRead.toString)
 
     val baseRDD =

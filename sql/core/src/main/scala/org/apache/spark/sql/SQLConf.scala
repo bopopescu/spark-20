@@ -127,7 +127,11 @@ private[sql] class SQLConf extends Serializable {
   /** When true the planner will use the external sort, which may spill to disk. */
   private[spark] def externalSortEnabled: Boolean = getConf(EXTERNAL_SORT, "false").toBoolean
 
-  /**
+  /** When true uses batched read of a Parquet file for flat schema. */
+  private[spark] def parquetUseBatchRead =
+    getConf(PARQUET_USE_BATCH_READ, "false").toBoolean
+
+    /**
    * When set to true, Spark SQL will use the Scala compiler at runtime to generate custom bytecode
    * that evaluates expressions found in queries.  In general this custom code runs much faster
    * than interpreted evaluation, but there are significant start-up costs due to compilation.

@@ -130,7 +130,7 @@ private[sql] case class ParquetTableScan(
        SQLConf.PARQUET_USE_BATCH_READ,
        sqlContext.getConf(SQLConf.PARQUET_USE_BATCH_READ, "false"))
     // Tell RowReadSupport#prepareForRead method whether to use parquet batch read capability
-    val useBatchRead = sqlContext.getConf(SQLConf.PARQUET_USE_BATCH_READ, "false").toBoolean
+    val useBatchRead = sqlContext.conf.parquetUseBatchRead
     conf.set(SQLConf.PARQUET_USE_BATCH_READ, useBatchRead.toString)
     val baseRDD =
       new org.apache.spark.rdd.NewHadoopRDD(

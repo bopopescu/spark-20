@@ -723,7 +723,11 @@ private[sql] object ParquetRelation2 {
           convertToAttributes(
             parquetSchema,
             sqlContext.conf.isParquetBinaryAsString,
-            sqlContext.conf.isParquetINT96AsTimestamp))
+            sqlContext.conf.isParquetINT96AsTimestamp,
+          // Note: workaround for the bug with column names
+            metadata.getKeyValueMetaData.toMap.map {
+              x => (x._1.replace("doc_val", "doc_value"), x._2)
+            }))
       }
     }.reduceOption { (left, right) =>
       try left.merge(right) catch { case e: Throwable =>

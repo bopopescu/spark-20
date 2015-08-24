@@ -18,6 +18,7 @@
 package org.apache.spark.sql.parquet
 
 import java.io.IOException
+import java.util
 
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
@@ -26,7 +27,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.mapreduce.Job
 import parquet.format.converter.ParquetMetadataConverter
-import parquet.hadoop.metadata.{FileMetaData, ParquetMetadata}
+import parquet.hadoop.metadata.{EmbeddedIndexMetadata, FileMetaData, ParquetMetadata}
 import parquet.hadoop.util.ContextUtil
 import parquet.hadoop.{Footer, ParquetFileReader, ParquetFileWriter}
 import parquet.schema.PrimitiveType.{PrimitiveTypeName => ParquetPrimitiveTypeName}
@@ -372,16 +373,27 @@ private[parquet] object ParquetTypesConverter extends Logging {
 
   def convertToAttributes(parquetSchema: ParquetType,
                           isBinaryAsString: Boolean,
-                          isInt96AsTimestamp: Boolean): Seq[Attribute] = {
+                          isInt96AsTimestamp: Boolean,
+                          columnMetadata: Map[String, String] = Map.empty): Seq[Attribute] = {
     parquetSchema
       .asGroupType()
       .getFields
       .map(
-        field =>
+        field => {
+          val metadataBuilder = new MetadataBuilder()
+          val embeddedIndexes = EmbeddedIndexMetadata
+            .getEmbeddedIndexMetadataForColumn(columnMetadata, field.getName)
+          val columnMetadataMap = new util.HashMap[String, String]
+          embeddedIndexes.foreach(
+            index => index.addEmbeddedTableMetadataToFileMetadata(columnMetadataMap))
+          columnMetadataMap.foreach(e => metadataBuilder.putString(e._1, e._2))
+          val metadata = metadataBuilder.build()
           new AttributeReference(
             field.getName,
             toDataType(field, isBinaryAsString, isInt96AsTimestamp),
-            field.getRepetition != Repetition.REQUIRED)())
+            field.getRepetition != Repetition.REQUIRED,
+            metadata)()
+        })
   }
 
   def convertFromAttributes(attributes: Seq[Attribute],

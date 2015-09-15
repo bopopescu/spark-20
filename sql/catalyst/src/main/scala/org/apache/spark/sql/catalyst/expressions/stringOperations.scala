@@ -215,6 +215,39 @@ case class EndsWith(left: Expression, right: Expression)
 }
 
 /**
+ * A function that returns true if a word in string `left` starts with the string `right`.
+ * This is case insensitive
+ */
+case class WordStartsWith(left: Expression, right: Expression)
+  extends BinaryExpression with StringComparison {
+  //TODO: change it to check at word boundaries
+  override def compare(l: String, r: String) = l.toLowerCase
+    .contains(r.toLowerCase)
+}
+
+/**
+ * A function that returns true if a word in string `left` ends with the string `right`.
+ * This is case insensitive
+ */
+case class WordEndsWith(left: Expression, right: Expression)
+  extends BinaryExpression with StringComparison {
+  //TODO: change it to check at word boundaries
+  override def compare(l: String, r: String) = l.toLowerCase
+    .contains(r.toLowerCase)
+}
+
+/**
+ * A function that returns true if a word in string `left` matches the string `right`.
+ * This is case insensitive
+ */
+case class WordMatches(left: Expression, right: Expression)
+  extends BinaryExpression with StringComparison {
+  //TODO: change it to check at word boundaries
+  override def compare(l: String, r: String) = l.toLowerCase
+    .contains(r.toLowerCase)
+}
+
+/**
  * A function that takes a substring of its first argument starting at a given position.
  * Defined for String and Binary types.
  */

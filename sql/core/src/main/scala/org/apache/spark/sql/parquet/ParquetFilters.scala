@@ -24,7 +24,8 @@ import org.apache.hadoop.conf.Configuration
 import parquet.filter2.compat.FilterCompat
 import parquet.filter2.compat.FilterCompat._
 import parquet.filter2.predicate.FilterApi._
-import parquet.filter2.predicate.iotas.IndexContainsPredicate
+import parquet.filter2.predicate.iotas.
+  {IndexContainsPredicate, WordStartsWithPredicate, WordEndsWithPredicate, WordMatchesPredicate}
 import parquet.filter2.predicate.userdefined.StartsWithPredicate
 import parquet.filter2.predicate.{FilterApi, FilterPredicate}
 import parquet.hadoop.metadata.EmbeddedIndexMetadata
@@ -176,6 +177,42 @@ private[sql] object ParquetFilters {
             Binary.fromByteArray(v.asInstanceOf[Array[Byte]]).toStringUsingUTF8))
     }
 
+    def makeWordStartsWith(tableName: String):
+    PartialFunction[DataType, (String, Any) => FilterPredicate] = {
+      case StringType =>
+        (n: String, v: Any) => FilterApi.userDefined(
+          intColumn("doc_id"), new WordStartsWithPredicate(tableName, n,
+            v.asInstanceOf[String]))
+      case BinaryType =>
+        (n: String, v: Any) => FilterApi.userDefined(
+          intColumn("doc_id"), new WordStartsWithPredicate(tableName, n,
+            Binary.fromByteArray(v.asInstanceOf[Array[Byte]]).toStringUsingUTF8))
+    }
+
+    def makeWordEndsWith(tableName: String):
+    PartialFunction[DataType, (String, Any) => FilterPredicate] = {
+      case StringType =>
+        (n: String, v: Any) => FilterApi.userDefined(
+          intColumn("doc_id"), new WordEndsWithPredicate(tableName, n,
+            v.asInstanceOf[String]))
+      case BinaryType =>
+        (n: String, v: Any) => FilterApi.userDefined(
+          intColumn("doc_id"), new WordEndsWithPredicate(tableName, n,
+            Binary.fromByteArray(v.asInstanceOf[Array[Byte]]).toStringUsingUTF8))
+    }
+
+    def makeWordMatches(tableName: String):
+    PartialFunction[DataType, (String, Any) => FilterPredicate] = {
+      case StringType =>
+        (n: String, v: Any) => FilterApi.userDefined(
+          intColumn("doc_id"), new WordMatchesPredicate(tableName, n,
+            v.asInstanceOf[String]))
+      case BinaryType =>
+        (n: String, v: Any) => FilterApi.userDefined(
+          intColumn("doc_id"), new WordMatchesPredicate(tableName, n,
+            Binary.fromByteArray(v.asInstanceOf[Array[Byte]]).toStringUsingUTF8))
+    }
+
     def findIndexTableName(expression: Expression,
         columnName: String, indexName: String): String = {
       val columnRef = expression.references.find(_.name.equals(columnName)).get
@@ -284,6 +321,48 @@ private[sql] object ParquetFilters {
           .lift(dataType).map(_(name, value))
       case ContainsExact(NonNullLiteral(value, _), Cast(NamedExpression(name, _), dataType)) =>
         makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+
+      //Entry for WordStartsWith
+      case WordStartsWith(NamedExpression(name, _), NonNullLiteral(value, dataType)) =>
+        makeWordStartsWith(findIndexTableName(predicate, name, WordStartsWithPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+      case WordStartsWith(Cast(NamedExpression(name, _), dataType), NonNullLiteral(value, _)) =>
+        makeWordStartsWith(findIndexTableName(predicate, name, WordStartsWithPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+      case WordStartsWith(NonNullLiteral(value, dataType), NamedExpression(name, _)) =>
+        makeWordStartsWith(findIndexTableName(predicate, name, WordStartsWithPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+      case WordStartsWith(NonNullLiteral(value, _), Cast(NamedExpression(name, _), dataType)) =>
+        makeWordStartsWith(findIndexTableName(predicate, name, WordStartsWithPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+
+      //Entry for WordEndsWith
+      case WordEndsWith(NamedExpression(name, _), NonNullLiteral(value, dataType)) =>
+        makeWordEndsWith(findIndexTableName(predicate, name, WordEndsWithPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+      case WordEndsWith(Cast(NamedExpression(name, _), dataType), NonNullLiteral(value, _)) =>
+        makeWordEndsWith(findIndexTableName(predicate, name, WordEndsWithPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+      case WordEndsWith(NonNullLiteral(value, dataType), NamedExpression(name, _)) =>
+        makeWordEndsWith(findIndexTableName(predicate, name, WordEndsWithPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+      case WordEndsWith(NonNullLiteral(value, _), Cast(NamedExpression(name, _), dataType)) =>
+        makeWordEndsWith(findIndexTableName(predicate, name, WordEndsWithPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+
+      //Entry for WordMatches
+      case WordMatches(NamedExpression(name, _), NonNullLiteral(value, dataType)) =>
+        makeWordMatches(findIndexTableName(predicate, name, WordMatchesPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+      case WordMatches(Cast(NamedExpression(name, _), dataType), NonNullLiteral(value, _)) =>
+        makeWordMatches(findIndexTableName(predicate, name, WordMatchesPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+      case WordMatches(NonNullLiteral(value, dataType), NamedExpression(name, _)) =>
+        makeWordMatches(findIndexTableName(predicate, name, WordMatchesPredicate.INDEX_NAME))
+          .lift(dataType).map(_(name, value))
+      case WordMatches(NonNullLiteral(value, _), Cast(NamedExpression(name, _), dataType)) =>
+        makeWordMatches(findIndexTableName(predicate, name, WordMatchesPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
 
       case And(lhs, rhs) =>

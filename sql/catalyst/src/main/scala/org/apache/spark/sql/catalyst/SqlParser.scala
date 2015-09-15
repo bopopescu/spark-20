@@ -110,7 +110,7 @@ class SqlParser extends AbstractSparkSQLParser {
   protected val STRING = Keyword("STRING")
   protected val SUBSTR = Keyword("SUBSTR")
   protected val SUBSTRING = Keyword("SUBSTRING")
-  protected val STARTSWITH = Keyword("STARTSWITH")
+  protected val STARTS_WITH = Keyword("STARTS_WITH")
   protected val SUM = Keyword("SUM")
   protected val TABLE = Keyword("TABLE")
   protected val THEN = Keyword("THEN")
@@ -118,6 +118,9 @@ class SqlParser extends AbstractSparkSQLParser {
   protected val TRUE = Keyword("TRUE")
   protected val UNION = Keyword("UNION")
   protected val UPPER = Keyword("UPPER")
+  protected val WORD_ENDS_WITH = Keyword("WORD_ENDS_WITH")
+  protected val WORD_MATCHES = Keyword("WORD_MATCHES")
+  protected val WORD_STARTS_WITH = Keyword("WORD_STARTS_WITH")
   protected val WHEN = Keyword("WHEN")
   protected val WHERE = Keyword("WHERE")
 
@@ -310,12 +313,18 @@ class SqlParser extends AbstractSparkSQLParser {
       { case s ~ p => Substring(s, p, Literal(Integer.MAX_VALUE)) }
     | (SUBSTR | SUBSTRING) ~ "(" ~> expression ~ ("," ~> expression) ~ ("," ~> expression) <~ ")" ^^
       { case s ~ p ~ l => Substring(s, p, l) }
-    | STARTSWITH ~ "(" ~> expression  ~ ("," ~> expression) <~ ")" ^^
+    | STARTS_WITH ~ "(" ~> expression  ~ ("," ~> expression) <~ ")" ^^
       { case s ~ p => StartsWith(s, p) }
     | CONTAINS ~ "(" ~> expression  ~ ("," ~> expression) <~ ")" ^^
       { case s ~ p => Contains(s, p) }
-      | CONTAINS_EXACT ~ "(" ~> expression  ~ ("," ~> expression) <~ ")" ^^
+    | CONTAINS_EXACT ~ "(" ~> expression  ~ ("," ~> expression) <~ ")" ^^
       { case s ~ p => ContainsExact(s, p) }
+    | WORD_STARTS_WITH ~ "(" ~> expression  ~ ("," ~> expression) <~ ")" ^^
+      { case s ~ p => WordStartsWith(s, p) }
+    | WORD_ENDS_WITH ~ "(" ~> expression  ~ ("," ~> expression) <~ ")" ^^
+      { case s ~ p => WordEndsWith(s, p) }
+    | WORD_MATCHES ~ "(" ~> expression  ~ ("," ~> expression) <~ ")" ^^
+      { case s ~ p => WordMatches(s, p) }
     | COALESCE ~ "(" ~> repsep(expression, ",") <~ ")" ^^ { case exprs => Coalesce(exprs) }
     | SQRT  ~ "(" ~> expression <~ ")" ^^ { case exp => Sqrt(exp) }
     | ABS   ~ "(" ~> expression <~ ")" ^^ { case exp => Abs(exp) }

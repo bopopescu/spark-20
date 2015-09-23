@@ -24,8 +24,7 @@ import org.apache.hadoop.conf.Configuration
 import parquet.filter2.compat.FilterCompat
 import parquet.filter2.compat.FilterCompat._
 import parquet.filter2.predicate.FilterApi._
-import parquet.filter2.predicate.iotas.
-  {IndexContainsPredicate, WordStartsWithPredicate, WordEndsWithPredicate, WordMatchesPredicate}
+import parquet.filter2.predicate.iotas._
 import parquet.filter2.predicate.userdefined.StartsWithPredicate
 import parquet.filter2.predicate.{FilterApi, FilterPredicate}
 import parquet.hadoop.metadata.EmbeddedIndexMetadata
@@ -297,72 +296,72 @@ private[sql] object ParquetFilters {
 
       //Entry for Contains
       case Contains(NamedExpression(name, _), NonNullLiteral(value, dataType)) =>
-        makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+        makeContains(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
       case Contains(Cast(NamedExpression(name, _), dataType), NonNullLiteral(value, _)) =>
-        makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+        makeContains(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
       case Contains(NonNullLiteral(value, dataType), NamedExpression(name, _)) =>
-        makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+        makeContains(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
       case Contains(NonNullLiteral(value, _), Cast(NamedExpression(name, _), dataType)) =>
-        makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+        makeContains(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
 
       //Entry for ContainsExact
       case ContainsExact(NamedExpression(name, _), NonNullLiteral(value, dataType)) =>
-        makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+        makeContains(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
       case ContainsExact(Cast(NamedExpression(name, _), dataType), NonNullLiteral(value, _)) =>
-        makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+        makeContains(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
       case ContainsExact(NonNullLiteral(value, dataType), NamedExpression(name, _)) =>
-        makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+        makeContains(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
       case ContainsExact(NonNullLiteral(value, _), Cast(NamedExpression(name, _), dataType)) =>
-        makeContains(findIndexTableName(predicate, name, IndexContainsPredicate.INDEX_NAME))
+        makeContains(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
 
       //Entry for WordStartsWith
       case WordStartsWith(NamedExpression(name, _), NonNullLiteral(value, dataType)) =>
-        makeWordStartsWith(findIndexTableName(predicate, name, WordStartsWithPredicate.INDEX_NAME))
+        makeWordStartsWith(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
       case WordStartsWith(Cast(NamedExpression(name, _), dataType), NonNullLiteral(value, _)) =>
-        makeWordStartsWith(findIndexTableName(predicate, name, WordStartsWithPredicate.INDEX_NAME))
+        makeWordStartsWith(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
       case WordStartsWith(NonNullLiteral(value, dataType), NamedExpression(name, _)) =>
-        makeWordStartsWith(findIndexTableName(predicate, name, WordStartsWithPredicate.INDEX_NAME))
+        makeWordStartsWith(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
       case WordStartsWith(NonNullLiteral(value, _), Cast(NamedExpression(name, _), dataType)) =>
-        makeWordStartsWith(findIndexTableName(predicate, name, WordStartsWithPredicate.INDEX_NAME))
+        makeWordStartsWith(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
 
       //Entry for WordEndsWith
       case WordEndsWith(NamedExpression(name, _), NonNullLiteral(value, dataType)) =>
-        makeWordEndsWith(findIndexTableName(predicate, name, WordEndsWithPredicate.INDEX_NAME))
+        makeWordEndsWith(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
       case WordEndsWith(Cast(NamedExpression(name, _), dataType), NonNullLiteral(value, _)) =>
-        makeWordEndsWith(findIndexTableName(predicate, name, WordEndsWithPredicate.INDEX_NAME))
+        makeWordEndsWith(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
       case WordEndsWith(NonNullLiteral(value, dataType), NamedExpression(name, _)) =>
-        makeWordEndsWith(findIndexTableName(predicate, name, WordEndsWithPredicate.INDEX_NAME))
+        makeWordEndsWith(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
       case WordEndsWith(NonNullLiteral(value, _), Cast(NamedExpression(name, _), dataType)) =>
-        makeWordEndsWith(findIndexTableName(predicate, name, WordEndsWithPredicate.INDEX_NAME))
+        makeWordEndsWith(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
 
       //Entry for WordMatches
       case WordMatches(NamedExpression(name, _), NonNullLiteral(value, dataType)) =>
-        makeWordMatches(findIndexTableName(predicate, name, WordMatchesPredicate.INDEX_NAME))
+        makeWordMatches(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
       case WordMatches(Cast(NamedExpression(name, _), dataType), NonNullLiteral(value, _)) =>
-        makeWordMatches(findIndexTableName(predicate, name, WordMatchesPredicate.INDEX_NAME))
+        makeWordMatches(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
       case WordMatches(NonNullLiteral(value, dataType), NamedExpression(name, _)) =>
-        makeWordMatches(findIndexTableName(predicate, name, WordMatchesPredicate.INDEX_NAME))
+        makeWordMatches(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
       case WordMatches(NonNullLiteral(value, _), Cast(NamedExpression(name, _), dataType)) =>
-        makeWordMatches(findIndexTableName(predicate, name, WordMatchesPredicate.INDEX_NAME))
+        makeWordMatches(findIndexTableName(predicate, name, SuffixArrayPredicate.INDEX_NAME))
           .lift(dataType).map(_(name, value))
 
       case And(lhs, rhs) =>
